@@ -10,6 +10,10 @@ The window that opens lists two addresses: one for this computer and one for fri
 
 To check that everything is working and saving correctly, run `npm run check`. It only reads your real data and does its testing on a throwaway copy.
 
+## Burger lists
+
+The critics' lists live in `public/lists.json`. To add or refresh one, edit that file with each restaurant's name and a link to the source. Keep to names and addresses rather than copying reviews.
+
 ## Your data
 
 Ratings are saved in `data/ratings.json` and photos in `data/photos`. Back up the `data` folder to back up everything.

@@ -1,0 +1,36 @@
+[
+  {
+    "id": "globe-2026",
+    "name": "Boston Globe, Best of the Best 2026",
+    "tag": "Globe 2026",
+    "dish": "burger",
+    "url": "https://www.bostonglobe.com/2026/06/04/magazine/get-best-burgers-boston-beyond/",
+    "entries": [
+      { "name": "Bred", "aliases": ["Bred Gourmet"], "address": "2255 Dorchester Avenue", "area": "Boston, MA" },
+      { "name": "The Capital Burger", "address": "159 Newbury Street", "area": "Boston, MA" },
+      { "name": "Highland Kitchen", "address": "150 Highland Avenue", "area": "Somerville, MA" },
+      { "name": "Hojoko", "address": "1271 Boylston Street", "area": "Boston, MA" },
+      { "name": "Little Donkey", "address": "505 Massachusetts Avenue", "area": "Cambridge, MA" },
+      { "name": "Mr. Bartley's Burger Cottage", "aliases": ["Mr. Bartley's", "Mr. Bartley's Burger & Salad Cottage"], "address": "1246 Massachusetts Avenue", "area": "Cambridge, MA" }
+    ]
+  },
+  {
+    "id": "infatuation-2026",
+    "name": "The Infatuation, The 10 Best Burgers In Boston (September 2026)",
+    "tag": "Infatuation",
+    "dish": "burger",
+    "url": "https://www.theinfatuation.com/boston/guides/the-best-burgers-in-boston",
+    "entries": [
+      { "name": "Neptune Oyster", "address": "63 Salem Street", "area": "Boston, MA" },
+      { "name": "Tasty Burger", "address": "1301 Boylston Street", "area": "Boston, MA" },
+      { "name": "JM Curley", "aliases": ["Jm Curley's", "J.M. Curley"], "address": "21 Temple Place", "area": "Boston, MA" },
+      { "name": "Black Lamb", "address": "571 Tremont Street", "area": "Boston, MA" },
+      { "name": "A&B Kitchen & Bar", "aliases": ["A&B Kitchen"], "address": "115 Beverly Street", "area": "Boston, MA" },
+      { "name": "Roxy's Grilled Cheese & Burgers", "aliases": ["Roxy's Grilled Cheese", "Roxy's"], "address": "292 Massachusetts Avenue", "area": "Cambridge, MA" },
+      { "name": "Mr. Bartley's Burger Cottage", "aliases": ["Mr. Bartley's", "Mr. Bartley's Burger & Salad Cottage"], "address": "1246 Massachusetts Avenue", "area": "Cambridge, MA" },
+      { "name": "Gray's Hall", "area": "Boston, MA" },
+      { "name": "The Quiet Few", "area": "Boston, MA" },
+      { "name": "Alden & Harlow", "area": "Cambridge, MA" }
+    ]
+  }
+]

@@ -1,6 +1,6 @@
 const DISHES = {
-  burger: { board: 'The Burger Board', plural: 'burgers', one: 'burger', other: 'caesar', otherLabel: 'Caesar' },
-  caesar: { board: 'The Caesar Board', plural: 'Caesar salads', one: 'Caesar salad', other: 'burger', otherLabel: 'Burger' },
+  burger: { board: 'Burgers', plural: 'burgers', one: 'burger', other: 'caesar', otherEmoji: '🥗' },
+  caesar: { board: 'Caesars', plural: 'Caesars', one: 'Caesar', other: 'burger', otherEmoji: '🍔' },
 };
 const VERDICTS = [
   [10, 'Perfection'],
@@ -38,6 +38,9 @@ const state = {
   query: '',
   person: '',
   area: '',
+  filtersOpen: false,
+  folds: { critics: true }, // which collapsible sections are open
+  lists: [],
   sort: 'top',
   me: stored('me') || '',
   open: new Set(),
@@ -131,6 +134,11 @@ function locationLabel(restaurant) {
   return hasTwin && restaurant.address ? `${restaurant.address}, ${restaurant.area}` : restaurant.area;
 }
 
+function needsLocation(restaurant) {
+  if (!restaurant.area) return false;
+  return new Set(state.restaurants.map(areaKey)).size > 1 || locationLabel(restaurant) !== restaurant.area;
+}
+
 function reviewHtml(rating) {
   const mine = state.me && rating.rater.toLowerCase() === state.me.toLowerCase();
   const date = new Date(rating.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -158,30 +166,40 @@ function rowHtml(entry) {
   const everyone = allRatingsFor(restaurant.id, state.dish);
   const count = state.person
     ? `Group ${fmt(average(everyone))}`
-    : `${ratings.length} ${ratings.length === 1 ? 'rating' : 'ratings'}`;
+    : ratings.map((r) => `${r.rater}\u00a0${fmt(r.score)}`).join(' · ');
   const scoreLabel = state.person ? `${state.person}'s grade` : 'Average grade';
+  const iRatedThis = !state.me || everyone.some((r) => isMe(r.rater));
   const meta = [
-    locationLabel(restaurant),
     count,
-    other.length ? `${dish.otherLabel} ${fmt(average(other))}` : '',
+    state.person || iRatedThis ? '' : `${state.me} hasn't rated`,
+    other.length ? `${dish.otherEmoji}\u00a0${fmt(average(other))}` : '',
   ].filter(Boolean).map(esc).join(' · ');
+  // Location is noise when everything's in one city, so it only shows once it helps.
+  const moreMeta = needsLocation(restaurant) ? esc(locationLabel(restaurant)) : '';
   const iRated = state.me && everyone.some((r) => r.rater.toLowerCase() === state.me.toLowerCase());
   const photo = ratings.find((r) => r.photo);
+  const isSingle = !state.person && ratings.length === 1;
   const place = `
           <span class="place-name">${esc(restaurant.name)}</span>
           <span class="place-meta">${meta}</span>
-          <span class="meter" aria-hidden="true"><span style="width:${avg * 10}%"></span></span>`;
+          ${moreMeta ? `<span class="place-meta">${moreMeta}</span>` : ''}
+          ${listTagsHtml(restaurant, state.dish)}`;
   return `
-    <article class="row${rank === 1 ? ' first' : ''}">
+    <article class="row${rank === 1 ? ' first' : ''}${isSingle ? ' single' : ''}">
       <button class="row-main" type="button" data-toggle="${restaurant.id}" aria-expanded="${isOpen}">
         <span class="rank">${rank}</span>
         ${photo
     ? `<span class="place-with-thumb"><img class="row-thumb" src="/photos/${esc(photo.photo)}.jpg" alt="" loading="lazy"><span class="place">${place}</span></span>`
     : `<span class="place">${place}</span>`}
-        <span class="score" aria-label="${esc(scoreLabel)} ${fmt(avg)} out of 10">${fmt(avg)}</span>
+        <span class="score-cell">
+          <span class="score" aria-label="${esc(scoreLabel)} ${fmt(avg)} out of 10">${fmt(avg)}</span>
+          ${isSingle ? '<span class="score-note">1 rating</span>' : ''}
+        </span>
+        <svg class="chevron" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       ${isOpen ? `<div class="detail">
-        ${restaurant.address ? `<p class="place-address">${esc(restaurant.address)}, ${esc(restaurant.area)}</p>` : ''}
+        ${listLinksHtml(restaurant, state.dish)}
+        ${restaurant.address || restaurant.area ? `<p class="place-address">${[restaurant.address, restaurant.area].filter(Boolean).map(esc).join(', ')}</p>` : ''}
         ${ratings.map(reviewHtml).join('')}
         <div class="detail-foot">
           ${iRated ? '' : `<button class="ghost" type="button" data-rate="${restaurant.id}">Add your rating</button>`}
@@ -226,7 +244,6 @@ function emptyHtml() {
     <div class="empty">
       <h2>The board is empty</h2>
       <p>Rate the first ${esc(dish.one)} and start the argument.</p>
-      <button class="primary" type="button" data-new="">Add the first rating</button>
     </div>`;
 }
 
@@ -237,7 +254,7 @@ function renderMasthead(rated) {
   const activeTab = state.view === 'board' ? state.dish : state.view;
   document.body.dataset.dish = activeTab;
   $('boardTitle').textContent = onMap ? 'The Map' : onTry ? 'Want to Try' : dish.board;
-  $('rateButton').textContent = onTry ? '+ Save a place' : '+ Add a rating';
+  $('rateButton').textContent = onTry ? 'Save a place' : onMap ? 'Add a rating' : `Rate a ${dish.one}`;
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.setAttribute('aria-pressed', String(tab.dataset.dish === activeTab));
   });
@@ -249,9 +266,9 @@ function renderMasthead(rated) {
     $('boardStat').textContent = pinned === 1 ? '1 spot on the map.' : `${pinned} spots on the map.`;
   } else if (rated.length) {
     const leader = rated[0];
-    const count = rated.length === 1 ? `1 spot rated` : `${rated.length} spots rated`;
-    const who = state.person ? ` by ${state.person}` : '';
-    $('boardStat').textContent = `${count}${who}. Leading: ${leader.restaurant.name}, ${fmt(leader.avg)}`;
+    const count = rated.length === 1 ? '1 spot' : `${rated.length} spots`;
+    const who = state.person ? ` for ${state.person}` : '';
+    $('boardStat').textContent = `${leader.restaurant.name} leads${who} at ${fmt(leader.avg)} · ${count}`;
   } else {
     $('boardStat').textContent = state.person || state.area ? `No ${dish.plural} rated with those filters.` : `No ${dish.plural} rated yet.`;
   }
@@ -292,6 +309,12 @@ function renderFilters() {
     state.area,
   );
   $('areaOptions').innerHTML = sorted.map(([, label]) => `<option value="${esc(label)}"></option>`).join('');
+
+  const active = [state.person, state.area].filter(Boolean).length;
+  $('filterToggle').textContent = active ? `Filters (${active})` : 'Filters';
+  $('filterToggle').classList.toggle('active', active > 0);
+  $('filterToggle').setAttribute('aria-expanded', String(state.filtersOpen));
+  $('filters').classList.toggle('open', state.filtersOpen);
 }
 
 function render() {
@@ -314,10 +337,99 @@ function render() {
 
   let html = shownRated.map(rowHtml).join('');
   if (shownUnrated.length) {
-    html += `<h2 class="section-label">No ${esc(DISHES[state.dish].plural)} rated here yet</h2>`;
-    html += shownUnrated.map(unratedHtml).join('');
+    html += foldHtml('untried', `Haven't tried the ${esc(DISHES[state.dish].one)} (${shownUnrated.length})`, shownUnrated.map(unratedHtml).join(''));
   }
-  $('board').innerHTML = html || emptyHtml();
+  const extras = criticsHtml(rated.filter((e) => !state.area || areaKey(e.restaurant) === state.area)) + picksHtml(state.dish);
+  $('board').innerHTML = (html || emptyHtml()) + extras;
+}
+
+/* Published "best of" lists. Burgers only for now, kept in public/lists.json. */
+const listKey = (name) => norm(name).replace(/^the\s+/, '').replace(/&/g, 'and').replace(/[^a-z0-9]/g, '');
+const entryKeys = (entry) => [entry.name, ...(entry.aliases || [])].map(listKey);
+
+function listsFor(restaurant, dish) {
+  const key = listKey(restaurant.name);
+  return state.lists.filter((list) => list.dish === dish && list.entries.some((e) => entryKeys(e).includes(key)));
+}
+
+function listTagsHtml(restaurant, dish) {
+  const lists = listsFor(restaurant, dish);
+  if (!lists.length) return '';
+  return `<span class="list-tags">${lists.map((l) => `<span class="list-tag">${esc(l.tag)}</span>`).join('')}</span>`;
+}
+
+function listLinksHtml(restaurant, dish) {
+  const lists = listsFor(restaurant, dish);
+  if (!lists.length) return '';
+  const links = lists.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.name)}</a>`);
+  return `<p class="list-links">On the lists: ${links.join(' · ')}</p>`;
+}
+
+function foldHtml(fold, summary, body) {
+  // Searching should reveal what's inside, so a search opens every section.
+  const open = state.folds[fold] || state.query.trim();
+  return `<details class="untried" data-fold="${fold}"${open ? ' open' : ''}>
+    <summary>${summary}</summary>
+    ${body}
+  </details>`;
+}
+
+// Lists rank burgers but don't score them, so "agree" means: on a list, and above
+// this board's own average.
+function criticsHtml(rated) {
+  if (state.dish !== 'burger' || !state.lists.length || rated.length < 2 || state.query.trim()) return '';
+  const mean = average(rated.map((entry) => ({ score: entry.avg })));
+  const line = (entry) => `
+    <li><span>${esc(entry.restaurant.name)}</span><span class="critic-score">${fmt(entry.avg)}</span></li>`;
+  const group = (title, entries) => (entries.length
+    ? `<h3>${title}</h3><ul>${entries.map(line).join('')}</ul>`
+    : '');
+  const listed = (entry) => listsFor(entry.restaurant, 'burger').length > 0;
+  const body = [
+    group('You and the critics agree', rated.filter((e) => listed(e) && e.avg >= mean)),
+    group("You're less sold", rated.filter((e) => listed(e) && e.avg < mean)),
+    group('Your hidden gems', rated.filter((e) => !listed(e) && e.avg >= mean)),
+  ].join('');
+  if (!body) return '';
+  return foldHtml('critics', 'You vs. the critics', `<div class="critics">${body}
+    <p class="critics-note">Compared with your board's average of ${fmt(mean)}. The lists don't score burgers, so this only shows who made the cut.</p></div>`);
+}
+
+function picksHtml(dish) {
+  const picks = new Map();
+  for (const list of state.lists.filter((l) => l.dish === dish)) {
+    for (const entry of list.entries) {
+      const key = listKey(entry.name);
+      if (!picks.has(key)) picks.set(key, { entry, lists: [] });
+      picks.get(key).lists.push(list);
+    }
+  }
+  const rows = [...picks.values()].filter(({ entry }) => {
+    const keys = entryKeys(entry);
+    const known = state.restaurants.find((r) => keys.includes(listKey(r.name)));
+    if (known && ratingsFor(known.id, dish).length) return false;
+    if (state.area && entry.area.toLowerCase() !== state.area) return false;
+    return matches({ name: entry.name, area: entry.area }, state.query);
+  }).sort((a, b) => b.lists.length - a.lists.length || a.entry.name.localeCompare(b.entry.name)).map(({ entry, lists }) => {
+    const keys = entryKeys(entry);
+    const known = state.restaurants.find((r) => keys.includes(listKey(r.name)));
+    const saved = known && state.wishes.some((w) => w.restaurantId === known.id && isMe(w.person));
+    const where = [entry.address, entry.area].filter(Boolean).join(', ');
+    return `
+      <div class="unrated">
+        <span class="place">
+          <span class="place-name">${esc(entry.name)}</span>
+          <span class="place-meta">${esc(where)}</span>
+          <span class="list-tags">${lists.map((l) => `<span class="list-tag">${esc(l.tag)}</span>`).join('')}</span>
+        </span>
+        <span class="wish-actions">
+          ${saved ? '<span class="place-meta">Saved</span>' : `<button class="link" type="button" data-pick-save="${esc(entry.name)}" aria-label="Save ${esc(entry.name)} to Want to Try">Save</button>`}
+          <button class="ghost" type="button" data-pick-rate="${esc(entry.name)}" aria-label="Rate ${esc(entry.name)}">Rate it</button>
+        </span>
+      </div>`;
+  });
+  if (!rows.length) return '';
+  return foldHtml('picks', `Critics' picks you haven't tried (${rows.length})`, rows.join(''));
 }
 
 /* Want to try */
@@ -374,7 +486,6 @@ function wishListHtml() {
     <div class="empty">
       <h2>Nowhere saved yet</h2>
       <p>Heard about a great burger? Save it here so you don't forget.</p>
-      <button class="primary" type="button" data-save-place>Save a place</button>
     </div>`;
 }
 
@@ -439,7 +550,9 @@ function pinHtml(entry) {
 
 function setupMap() {
   if (leaflet.map || !window.L) return;
-  leaflet.map = L.map('map', { worldCopyJump: true }).setView([39.5, -98.35], 4);
+  leaflet.map = L.map('map', { worldCopyJump: true, attributionControl: false }).setView([39.5, -98.35], 4);
+  // Top corner, so the required credit can't end up under the fixed rating button.
+  L.control.attribution({ position: 'topright' }).addTo(leaflet.map);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -481,7 +594,7 @@ function renderPins(entries) {
 
 function dishBlockHtml(dishKey, ratings, restaurant) {
   const emoji = dishKey === 'burger' ? '🍔' : '🥗';
-  const label = dishKey === 'burger' ? 'Burger' : 'Caesar Salad';
+  const label = dishKey === 'burger' ? 'Burger' : 'Caesar';
   const iRated = state.me && allRatingsFor(restaurant.id, dishKey)
     .some((r) => r.rater.toLowerCase() === state.me.toLowerCase());
   return `
@@ -493,7 +606,7 @@ function dishBlockHtml(dishKey, ratings, restaurant) {
     : '<span class="dish-none">Not rated yet</span>'}
       </div>
       ${ratings.map(reviewHtml).join('')}
-      ${iRated ? '' : `<button class="ghost" type="button" data-rate="${restaurant.id}" data-rate-dish="${dishKey}">Rate the ${label.toLowerCase()}</button>`}
+      ${iRated ? '' : `<button class="ghost" type="button" data-rate="${restaurant.id}" data-rate-dish="${dishKey}">Rate the ${dishKey === 'burger' ? 'burger' : 'Caesar'}</button>`}
     </section>`;
 }
 
@@ -519,6 +632,7 @@ function panelHtml(entry) {
         ${entry.wishes.length ? `⭐ ${esc(entry.wishes.map((w) => w.person).join(' & '))} ${entry.wishes.length === 1 ? 'wants' : 'want'} to try it.` : ''}
         ${wishToggleHtml(restaurant.id)}
       </p>
+      ${listLinksHtml(restaurant, 'burger')}
       ${dishBlockHtml('burger', entry.burger, restaurant)}
       ${dishBlockHtml('caesar', entry.caesar, restaurant)}
     </article>`;
@@ -621,10 +735,41 @@ function verdictFor(score) {
   return VERDICTS.find(([floor]) => score >= floor)[1];
 }
 
+function updateSubmitLabel() {
+  if (form.wish) return;
+  const score = parseScore($('scoreInput').value);
+  if (score === null) $('rateSubmit').textContent = 'Post my rating';
+  else $('rateSubmit').textContent = existingRating() ? `Update to ${fmt(score)}` : `Post my ${fmt(score)}`;
+}
+
 function setScore(score, fromTyping) {
   if (!fromTyping) $('scoreInput').value = fmt(score);
   $('scoreSlider').value = score;
   $('verdict').textContent = verdictFor(score);
+  $('scoreCard').classList.remove('blank');
+  updateSubmitLabel();
+}
+
+// Grades start blank so a default number can't nudge everyone toward the same score.
+function clearScore() {
+  $('scoreInput').value = '';
+  $('scoreSlider').value = 5.5;
+  $('verdict').textContent = 'Slide, tap or type your grade';
+  $('scoreCard').classList.add('blank');
+  updateSubmitLabel();
+}
+
+function themeRateDialog() {
+  const dish = form.wish ? 'try' : currentDish();
+  $('rateDialog').dataset.dish = dish;
+  $('rateTitle').textContent = form.wish ? 'Save a place' : `Rate a ${DISHES[dish].one}`;
+}
+
+function stepScore(change) {
+  const current = parseScore($('scoreInput').value) ?? Number($('scoreSlider').value);
+  // Whole tenths, so repeated taps can't drift to 8.500000001.
+  const next = (Math.round(current * 10) + change) / 10;
+  setScore(Math.min(10, Math.max(1, next)));
 }
 
 function parseScore(text) {
@@ -660,16 +805,15 @@ function syncExisting() {
     $('noteInput').value = existing.note;
     form.prefilled = true;
     $('rateHint').textContent = 'You already rated this, so saving will update your grade.';
-    $('rateSubmit').textContent = 'Update rating';
   } else {
     // Don't carry an old grade over to a different dish or restaurant.
     if (form.prefilled) {
-      setScore(7);
+      clearScore();
       $('noteInput').value = '';
       form.prefilled = false;
     }
     $('rateHint').textContent = `Rating as ${state.me}.`;
-    $('rateSubmit').textContent = 'Post rating';
+    updateSubmitLabel();
   }
 }
 
@@ -969,15 +1113,13 @@ function openRate({ restaurantId = null, name = '', dish = state.dish, wish = fa
   showPickedLocation({});
   closeOptions();
   document.querySelector(`input[name="dish"][value="${dish}"]`).checked = true;
-  setScore(7);
+  clearScore();
   const restaurant = state.restaurants.find((r) => r.id === restaurantId);
-  $('rateTitle').textContent = wish ? 'Save a place' : restaurant ? restaurant.name : 'Add a rating';
+  themeRateDialog();
   if (restaurant) pickRestaurant(restaurant);
   else syncExisting();
   $('rateDialog').showModal();
-  if (restaurant) {
-    $('scoreInput').select();
-  } else {
+  if (!restaurant) {
     $('restaurantInput').focus();
     if (name) showOptions();
     else showNearby();
@@ -1035,7 +1177,7 @@ async function submitRating(event) {
     return;
   }
   if (score === null) {
-    $('rateError').textContent = 'Grades go from 1.0 to 10.0, with one decimal.';
+    $('rateError').textContent = $('scoreInput').value.trim() ? 'Grades go from 1.0 to 10.0, with one decimal.' : 'Pick a grade first.';
     $('scoreInput').focus();
     return;
   }
@@ -1188,6 +1330,11 @@ document.querySelectorAll('.tab').forEach((tab) => {
   });
 });
 
+$('filterToggle').addEventListener('click', () => {
+  state.filtersOpen = !state.filtersOpen;
+  render();
+});
+
 $('search').addEventListener('input', (event) => {
   state.query = event.target.value;
   render();
@@ -1223,12 +1370,14 @@ function handleBoardClick(event) {
     if (rating) openRate({ restaurantId: rating.restaurantId, dish: rating.dish });
   } else if (target.dataset.delete) {
     deleteRating(target.dataset.delete);
+  } else if (target.dataset.pickSave) {
+    openRate({ wish: true, name: target.dataset.pickSave });
+  } else if (target.dataset.pickRate) {
+    openRate({ name: target.dataset.pickRate, dish: state.dish });
   } else if (target.dataset.wish) {
     addWish(target.dataset.wish);
   } else if (target.dataset.unwish) {
     removeWish(target.dataset.unwish);
-  } else if (target.dataset.savePlace !== undefined) {
-    openRate({ wish: true });
   } else if (target.dataset.editRestaurant) {
     openEditRestaurant(target.dataset.editRestaurant);
   } else if (target.dataset.clear !== undefined) {
@@ -1240,6 +1389,11 @@ function handleBoardClick(event) {
   }
 }
 $('board').addEventListener('click', handleBoardClick);
+// Remembered because the board redraws whenever a friend's new rating arrives.
+$('board').addEventListener('toggle', (event) => {
+  const { fold } = event.target.dataset || {};
+  if (fold && !state.query.trim()) state.folds[fold] = event.target.open;
+}, true);
 $('mapPanel').addEventListener('click', handleBoardClick);
 
 $('editPlaceSearch').addEventListener('input', searchEditPlaces);
@@ -1295,9 +1449,17 @@ $('restaurantList').addEventListener('mousedown', (event) => {
 });
 
 document.querySelectorAll('input[name="dish"]').forEach((radio) => {
-  radio.addEventListener('change', syncExisting);
+  radio.addEventListener('change', () => {
+    themeRateDialog();
+    syncExisting();
+  });
 });
-$('scoreSlider').addEventListener('input', (event) => setScore(Number(event.target.value)));
+$('scoreDown').addEventListener('click', () => stepScore(-1));
+$('scoreUp').addEventListener('click', () => stepScore(1));
+const useSlider = (event) => setScore(Number(event.target.value));
+$('scoreSlider').addEventListener('input', useSlider);
+// A tap right on the untouched thumb fires no input event, but still means that grade.
+$('scoreSlider').addEventListener('click', useSlider);
 $('scoreInput').addEventListener('input', (event) => {
   const score = parseScore(event.target.value);
   if (score !== null) setScore(score, true);
@@ -1333,6 +1495,15 @@ setInterval(refresh, 15000);
 window.addEventListener('focus', refresh);
 
 render();
+fetch('lists.json')
+  .then((res) => res.json())
+  .then((lists) => {
+    state.lists = lists;
+    render();
+  })
+  .catch(() => {
+    // The app works fine without the lists.
+  });
 refresh().then(() => {
   if (!state.me) askName();
 });

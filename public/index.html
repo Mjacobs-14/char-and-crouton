@@ -17,28 +17,29 @@
         <span class="wordmark">Char &amp; Crouton</span>
         <button class="who" id="whoButton" type="button"></button>
       </div>
-      <h1 id="boardTitle">The Burger Board</h1>
+      <h1 id="boardTitle">Burgers</h1>
       <p class="stat" id="boardStat"></p>
-      <div class="tabs" role="group" aria-label="Choose a dish">
-        <button class="tab" type="button" data-dish="burger"><span aria-hidden="true">🍔</span> Burgers</button>
-        <button class="tab" type="button" data-dish="caesar"><span aria-hidden="true">🥗</span> Caesar<span class="long"> Salads</span></button>
-        <button class="tab" type="button" data-dish="map"><span aria-hidden="true">🗺️</span> Map</button>
-        <button class="tab" type="button" data-dish="try"><span aria-hidden="true">⭐</span> Want to Try</button>
-      </div>
     </div>
   </header>
   <div class="checks" aria-hidden="true"></div>
 
   <main class="wrap">
+    <div class="tabs" role="group" aria-label="Choose a dish">
+      <button class="tab" type="button" data-dish="burger"><span aria-hidden="true">🍔</span> Burgers</button>
+      <button class="tab" type="button" data-dish="caesar"><span aria-hidden="true">🥗</span> Caesars</button>
+      <button class="tab" type="button" data-dish="map"><span aria-hidden="true">🗺️</span> Map</button>
+      <button class="tab" type="button" data-dish="try"><span aria-hidden="true">⭐</span> <span class="long">Want to </span>Try</button>
+    </div>
     <div class="controls">
       <label class="search">
         <span class="visually-hidden">Search restaurants</span>
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m16.5 16.5 4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
         <input id="search" type="search" placeholder="Search restaurants" autocomplete="off">
       </label>
-      <button class="primary" id="rateButton" type="button">+ Add a rating</button>
+      <button class="filter-toggle" id="filterToggle" type="button" aria-expanded="false" aria-controls="filters">Filters</button>
+      <button class="primary" id="rateButton" type="button">Rate a burger</button>
     </div>
-    <div class="filters">
+    <div class="filters" id="filters">
       <label>
         <span class="filter-label">Person</span>
         <select id="personFilter"></select>
@@ -87,18 +88,27 @@
         <legend>Dish</legend>
         <div class="choice">
           <label><input type="radio" name="dish" value="burger"><span>🍔 Burger</span></label>
-          <label><input type="radio" name="dish" value="caesar"><span>🥗 Caesar Salad</span></label>
+          <label><input type="radio" name="dish" value="caesar"><span>🥗 Caesar</span></label>
         </div>
       </fieldset>
 
       <div class="field" id="gradeField">
         <label for="scoreInput">Your grade</label>
-        <div class="dial">
-          <input id="scoreInput" class="score-input" type="text" inputmode="decimal" maxlength="4" autocomplete="off">
-          <span class="out-of">/ 10</span>
-          <span class="verdict" id="verdict"></span>
+        <div class="score-card" id="scoreCard">
+          <div class="score-dial">
+            <button class="stepper" id="scoreDown" type="button" aria-label="Lower grade by 0.1">−</button>
+            <input id="scoreInput" class="score-input" type="text" inputmode="decimal" maxlength="4" autocomplete="off" placeholder="?">
+            <button class="stepper" id="scoreUp" type="button" aria-label="Raise grade by 0.1">+</button>
+          </div>
+          <div class="verdict" id="verdict"></div>
+          <input id="scoreSlider" type="range" min="1" max="10" step="0.1" aria-label="Grade slider">
+          <div class="scale" aria-hidden="true"><span>1.0</span><span>10.0</span></div>
         </div>
-        <input id="scoreSlider" type="range" min="1" max="10" step="0.1" aria-label="Grade slider">
+      </div>
+
+      <div class="field">
+        <label for="noteInput">Notes <span class="optional">optional</span></label>
+        <textarea id="noteInput" rows="2" maxlength="280" placeholder="Crispy edges? Too much dressing?"></textarea>
       </div>
 
       <div class="field" id="photoField">
@@ -111,11 +121,6 @@
           </label>
           <button class="link" type="button" id="photoRemove" hidden>Remove</button>
         </div>
-      </div>
-
-      <div class="field">
-        <label for="noteInput">Notes <span class="optional">optional</span></label>
-        <textarea id="noteInput" rows="2" maxlength="280" placeholder="Crispy edges? Too much dressing?"></textarea>
       </div>
 
       <p class="form-error" id="rateError" role="alert"></p>

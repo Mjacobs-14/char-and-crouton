@@ -2,10 +2,13 @@
 
 Friends rate burgers and Caesar salads from 1.0 to 10.0, in tenths. A restaurant's score is the average of each person's rating.
 
+The focus is deliberately narrow: only burgers and Caesar salads, for one group of friends. Don't add other dishes or turn this into general restaurant rating.
+
 ## Layout
 
 - `server.js`: the Node server and API, with no dependencies. All data lives in memory and in `data/ratings.json`.
 - `public/`: the page, styles and client code, in plain JavaScript with no build step.
+- `public/lists.json`: published burger lists, entered by hand. Facts only (names, addresses, links), never review text. Lists don't give burger scores, so never present them as comparable numbers.
 - `scripts/check.js`: checks the real data read-only, then tests saving on a throwaway copy.
 
 ## Commands
