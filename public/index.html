@@ -23,6 +23,8 @@
   </header>
   <div class="checks" aria-hidden="true"></div>
 
+  <p class="frozen-banner" id="frozenBanner" role="status" hidden></p>
+
   <main class="wrap">
     <div class="tabs" role="group" aria-label="Choose a dish">
       <button class="tab" type="button" data-dish="burger"><span aria-hidden="true">🍔</span> Burgers</button>
@@ -154,23 +156,40 @@
     </form>
   </dialog>
 
-  <dialog id="nameDialog" class="sheet narrow" aria-labelledby="nameTitle">
-    <form id="nameForm" method="dialog" novalidate>
-      <div class="sheet-head">
-        <h2 id="nameTitle">Who's rating?</h2>
-      </div>
-      <div class="people" id="people"></div>
+  <dialog id="authDialog" class="sheet narrow" aria-labelledby="authTitle">
+    <div class="sheet-head">
+      <h2 id="authTitle">Sign in</h2>
+    </div>
+    <form id="signInForm" novalidate>
       <div class="field">
-        <label for="nameInput">Your name</label>
-        <input id="nameInput" type="text" maxlength="30" autocomplete="off" placeholder="First name is fine">
+        <label for="signInName">Your name</label>
+        <input id="signInName" type="text" maxlength="30" autocomplete="username" autocapitalize="words">
       </div>
-      <p class="form-error" id="nameError" role="alert"></p>
-      <button class="primary wide" type="submit">Continue</button>
+      <div class="field">
+        <label for="signInPassword">Password</label>
+        <input id="signInPassword" type="password" maxlength="200" autocomplete="current-password">
+      </div>
+      <button class="primary wide" type="submit">Sign in</button>
+      <button class="link auth-switch" id="useInvite" type="button">I have an invite code</button>
     </form>
+    <form id="inviteForm" novalidate hidden>
+      <div class="field">
+        <label for="inviteCode">Invite code</label>
+        <input id="inviteCode" type="text" maxlength="20" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="invitePassword">Choose a password <span class="optional">at least 8 characters</span></label>
+        <input id="invitePassword" type="password" maxlength="200" autocomplete="new-password">
+      </div>
+      <button class="primary wide" type="submit">Join in</button>
+      <button class="link auth-switch" id="useSignIn" type="button">I already have a password</button>
+    </form>
+    <p class="form-error auth-error" id="authError" role="alert"></p>
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="auth.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

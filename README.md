@@ -10,6 +10,16 @@ The window that opens lists two addresses: one for this computer and one for fri
 
 To check that everything is working and saving correctly, run `npm run check`. It only reads your real data and does its testing on a throwaway copy.
 
+## Accounts
+
+Everyone signs in. To add someone, or reset a forgotten password, run this on the computer running the app and send them the code privately:
+
+```
+npm run invite -- Sam
+```
+
+The code works once, for 7 days. They choose "I have an invite code", then pick their own password. If the name already has ratings, those ratings become theirs, so only send a code to the right person.
+
 ## Burger lists
 
 The critics' lists live in `public/lists.json`. To add or refresh one, edit that file with each restaurant's name and a link to the source. Keep to names and addresses rather than copying reviews.
@@ -20,4 +30,12 @@ Ratings are saved in `data/ratings.json` and photos in `data/photos`. Back up th
 
 Restaurant suggestions come from [Photon](https://photon.komoot.io), a free search over OpenStreetMap, so what you type in the restaurant box is sent there. If it's unavailable, you can still add restaurants by hand. The Map tab uses OpenStreetMap's map images and looks up restaurant websites there, so it needs an internet connection.
 
-There are no passwords: anyone on your network with the link can post under any name, so only run it on networks you trust.
+## Backups
+
+The app makes a dated copy of your ratings and photos in `data/backups` once a day, keeping the last 14. Run `npm run backup` for one that's kept until you delete it. To restore, stop the app and copy a backup's `ratings.json` and `photos` back into `data`.
+
+## Moving the app
+
+To keep one live copy, run `npm run freeze -- "We've moved: <new link>"` before copying your data. Nobody can change anything from that moment, and everyone sees the message. Undo it with `npm run freeze -- off`.
+
+Local connections aren't encrypted, so only run the app on networks you trust until it's online with https.

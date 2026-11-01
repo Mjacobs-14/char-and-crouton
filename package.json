@@ -5,7 +5,10 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "check": "node scripts/check.js"
+    "check": "node scripts/check.js",
+    "invite": "node scripts/invite.js",
+    "backup": "node scripts/backup.js",
+    "freeze": "node scripts/freeze.js"
   },
   "engines": {
     "node": ">=18"

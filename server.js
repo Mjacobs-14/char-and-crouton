@@ -4,11 +4,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const createAuth = require('./lib/auth');
+const { automaticBackup } = require('./lib/backup');
 
 const PORT = Number(process.env.PORT) || 4173;
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'ratings.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PHOTO_DIR = path.join(path.dirname(DATA_FILE), 'photos');
+const FROZEN_FILE = path.join(path.dirname(DATA_FILE), 'FROZEN');
 const PHOTO_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
 const PHOTON_HEADERS = { 'User-Agent': 'CharAndCrouton/1.0' };
@@ -46,7 +49,7 @@ function load() {
 }
 
 const db = load();
-if (!db.people) db.people = ['Matt', 'Sam'];
+if (!db.people) db.people = [];
 if (!db.wishes) db.wishes = [];
 
 function save() {
@@ -84,6 +87,22 @@ const clean = (value, max) => (typeof value === 'string' ? value.trim().replace(
 const same = (a, b) => a.toLowerCase() === b.toLowerCase();
 
 class BadRequest extends Error {}
+
+const auth = createAuth({ db, commit, dataFile: DATA_FILE, BadRequest, isFrozen: () => Boolean(frozenMessage()) });
+
+function frozenMessage() {
+  try {
+    return fs.readFileSync(FROZEN_FILE, 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+// Only what the page needs: password hashes and sessions must never leave the server.
+function view(person) {
+  const { restaurants, ratings, people, wishes } = db;
+  return { restaurants, ratings, people, wishes, me: person, frozen: frozenMessage() };
+}
 
 function isValidScore(score) {
   if (typeof score !== 'number' || score < 1 || score > 10) return false;
@@ -220,6 +239,7 @@ function normalizeWebsite(raw) {
 // Fetched the first time someone opens a restaurant on the map, then remembered.
 async function findWebsite(restaurant) {
   if (restaurant.website !== undefined) return restaurant.website;
+  if (frozenMessage()) return '';
   const match = /^osm:([NWR])(\d+)$/.exec(restaurant.placeId || '');
   if (!match) return '';
   const type = { N: 'node', W: 'way', R: 'relation' }[match[1]];
@@ -236,17 +256,14 @@ async function findWebsite(restaurant) {
 }
 
 // Each person has one rating per dish per restaurant, so rating again updates it.
-function saveRating(body) {
-  const rater = canonicalPerson(body.rater);
+function saveRating(body, rater) {
   const note = clean(body.note, 280);
-  if (!rater) throw new BadRequest('Tell us who is rating.');
   if (!DISHES.includes(body.dish)) throw new BadRequest('Dish must be a burger or a caesar.');
   if (!isValidScore(body.score)) throw new BadRequest('Score must be 1.0 to 10.0, in tenths.');
   if (body.photo && !(PHOTO_ID.test(body.photo) && fs.existsSync(photoPath(body.photo)))) {
     throw new BadRequest('That photo did not upload. Please try it again.');
   }
 
-  if (!db.people.includes(rater)) db.people.push(rater);
   const restaurant = findOrCreateRestaurant(body.restaurant);
   const score = Math.round(body.score * 10) / 10;
   const existing = db.ratings.find(
@@ -276,11 +293,6 @@ function saveRating(body) {
   return () => { if (replaced) removePhoto(replaced); };
 }
 
-function canonicalPerson(value) {
-  const typed = clean(value, 30);
-  return db.people.find((person) => same(person, typed)) || typed;
-}
-
 function photoPath(id) {
   return path.join(PHOTO_DIR, `${id}.jpg`);
 }
@@ -307,10 +319,7 @@ function removeRestaurantIfUnused(id) {
   if (!used) db.restaurants = db.restaurants.filter((r) => r.id !== id);
 }
 
-function saveWish(body) {
-  const person = canonicalPerson(body.person);
-  if (!person) throw new BadRequest('Tell us who wants to try it.');
-  if (!db.people.includes(person)) db.people.push(person);
+function saveWish(body, person) {
   const restaurant = findOrCreateRestaurant(body.restaurant);
   const note = clean(body.note, 280);
   const existing = db.wishes.find((w) => w.restaurantId === restaurant.id && w.person === person);
@@ -424,7 +433,7 @@ function servePhoto(pathname, res) {
     }
     res.writeHead(200, {
       'Content-Type': 'image/jpeg',
-      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Cache-Control': 'private, max-age=31536000, immutable',
       'X-Content-Type-Options': 'nosniff',
     });
     res.end(contents);
@@ -450,9 +459,36 @@ function serveStatic(pathname, res) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
     const { pathname, searchParams } = new URL(req.url, 'http://localhost');
+    if (pathname === '/api/login' && req.method === 'POST') {
+      await auth.login(req, res, await readJson(req));
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    if (pathname === '/api/claim' && req.method === 'POST') {
+      await auth.claim(req, res, await readJson(req));
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    if (pathname === '/api/logout' && req.method === 'POST') {
+      auth.logout(req, res);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    // The app's files are public, but all of its data is behind sign-in.
+    const me = auth.currentPerson(req);
+    if (!me && (pathname.startsWith('/api/') || pathname.startsWith('/photos/'))) {
+      sendJson(res, 401, { error: 'Please sign in.' });
+      return;
+    }
+    if (pathname.startsWith('/api/') && req.method !== 'GET' && frozenMessage()) {
+      sendJson(res, 503, { error: frozenMessage() });
+      return;
+    }
     if (pathname === '/api/state' && req.method === 'GET') {
-      sendJson(res, 200, db);
+      sendJson(res, 200, view(me));
     } else if (pathname === '/api/places' && req.method === 'GET') {
       try {
         sendJson(res, 200, await searchPlaces(searchParams));
@@ -462,8 +498,8 @@ const server = http.createServer(async (req, res) => {
       }
     } else if (pathname === '/api/ratings' && req.method === 'POST') {
       const body = await readJson(req);
-      commit(() => saveRating(body));
-      sendJson(res, 200, db);
+      commit(() => saveRating(body, me));
+      sendJson(res, 200, view(me));
     } else if (pathname === '/api/nearby' && req.method === 'GET') {
       try {
         sendJson(res, 200, await searchNearby(searchParams));
@@ -476,15 +512,18 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { id: savePhoto(await readPhotoBody(req)) });
     } else if (pathname === '/api/wishes' && req.method === 'POST') {
       const body = await readJson(req);
-      commit(() => { saveWish(body); });
-      sendJson(res, 200, db);
+      commit(() => { saveWish(body, me); });
+      sendJson(res, 200, view(me));
     } else if (pathname.startsWith('/api/wishes/') && req.method === 'DELETE') {
       const id = pathname.slice('/api/wishes/'.length);
-      if (!db.wishes.some((w) => w.id === id)) {
+      const wish = db.wishes.find((w) => w.id === id);
+      if (!wish) {
         sendJson(res, 404, { error: 'That is already off the list.' });
+      } else if (wish.person !== me) {
+        sendJson(res, 403, { error: 'You can only change your own list.' });
       } else {
         commit(() => { deleteWish(id); });
-        sendJson(res, 200, db);
+        sendJson(res, 200, view(me));
       }
     } else if (pathname.startsWith('/photos/') && req.method === 'GET') {
       servePhoto(pathname, res);
@@ -500,14 +539,17 @@ const server = http.createServer(async (req, res) => {
     } else if (pathname.startsWith('/api/restaurants/') && req.method === 'PATCH') {
       const body = await readJson(req);
       commit(() => updateRestaurant(pathname.slice('/api/restaurants/'.length), body));
-      sendJson(res, 200, db);
+      sendJson(res, 200, view(me));
     } else if (pathname.startsWith('/api/ratings/') && req.method === 'DELETE') {
       const id = pathname.slice('/api/ratings/'.length);
-      if (!db.ratings.some((r) => r.id === id)) {
+      const rating = db.ratings.find((r) => r.id === id);
+      if (!rating) {
         sendJson(res, 404, { error: 'That rating is already gone.' });
+      } else if (rating.rater !== me) {
+        sendJson(res, 403, { error: 'You can only delete your own ratings.' });
       } else {
         commit(() => deleteRating(id));
-        sendJson(res, 200, db);
+        sendJson(res, 200, view(me));
       }
     } else if (pathname.startsWith('/api/')) {
       sendJson(res, 404, { error: 'Not found' });
@@ -516,13 +558,23 @@ const server = http.createServer(async (req, res) => {
     }
   } catch (err) {
     if (err instanceof BadRequest || err instanceof URIError) {
-      sendJson(res, 400, { error: err.message });
+      sendJson(res, err.status || 400, { error: err.message });
     } else {
       console.error(err);
       sendJson(res, 500, { error: 'Something went wrong saving that.' });
     }
   }
 });
+
+function runAutomaticBackup() {
+  try {
+    automaticBackup(DATA_FILE);
+  } catch (err) {
+    console.error(`Automatic backup failed: ${err.message}`);
+  }
+}
+runAutomaticBackup();
+setInterval(runAutomaticBackup, 60 * 60 * 1000);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`\nChar & Crouton is open.\n\n  On this computer:  http://localhost:${PORT}`);

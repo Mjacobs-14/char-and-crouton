@@ -42,7 +42,8 @@ const state = {
   folds: { critics: true }, // which collapsible sections are open
   lists: [],
   sort: 'top',
-  me: stored('me') || '',
+  me: '',
+  frozen: null,
   open: new Set(),
 };
 let lastSnapshot = '';
@@ -50,11 +51,14 @@ let lastSnapshot = '';
 async function api(path, options) {
   const res = await fetch(path, options);
   const body = await res.json().catch(() => ({}));
+  if (res.status === 401) showAuth();
   if (!res.ok) throw new Error(body.error || 'Could not reach the server.');
   return body;
 }
 
 function applyData(data) {
+  state.me = data.me;
+  state.frozen = data.frozen;
   state.people = data.people;
   state.wishes = data.wishes;
   state.restaurants = data.restaurants;
@@ -274,8 +278,10 @@ function renderMasthead(rated) {
   }
   $('whoButton').innerHTML = state.me
     ? `<span class="avatar" aria-hidden="true">${initials(state.me)}</span>${esc(state.me)}`
-    : 'Set your name';
-  $('whoButton').setAttribute('aria-label', state.me ? `Rating as ${state.me}. Change name` : 'Set your name');
+    : 'Sign in';
+  $('whoButton').setAttribute('aria-label', state.me ? `Signed in as ${state.me}. Sign out` : 'Sign in');
+  $('frozenBanner').textContent = state.frozen || '';
+  $('frozenBanner').hidden = !state.frozen;
 }
 
 // Only rebuild the options when they change, so a background refresh can't close an open dropdown.
@@ -499,14 +505,14 @@ function wishToggleHtml(restaurantId) {
 
 async function addWish(restaurantId) {
   if (!state.me) {
-    askName(() => addWish(restaurantId));
+    showAuth();
     return;
   }
   try {
     applyData(await api('/api/wishes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ restaurant: { id: restaurantId }, person: state.me, note: '' }),
+      body: JSON.stringify({ restaurant: { id: restaurantId }, note: '' }),
     }));
     toast('Saved to Want to Try.');
   } catch (err) {
@@ -689,27 +695,11 @@ function toast(message) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
 }
 
-/* Who's rating */
-let afterName = null;
-
-function askName(then) {
-  afterName = then || null;
-  $('people').innerHTML = state.people
-    .map((name) => `<button class="person" type="button" data-person="${esc(name)}">${esc(name)}</button>`)
-    .join('');
-  $('nameInput').value = '';
-  $('nameError').textContent = '';
-  $('nameDialog').showModal();
-}
-
-function setName(name) {
-  state.me = name;
-  store('me', name);
-  $('nameDialog').close();
-  render();
-  const next = afterName;
-  afterName = null;
-  if (next) next();
+/* Account */
+async function signOut() {
+  if (!confirm(`Sign out of ${state.me}?`)) return;
+  await fetch('/api/logout', { method: 'POST' });
+  location.reload();
 }
 
 /* Rating form */
@@ -1088,7 +1078,7 @@ function moveOption(step) {
 
 function openRate({ restaurantId = null, name = '', dish = state.dish, wish = false } = {}) {
   if (!state.me) {
-    askName(() => openRate({ restaurantId, name, dish, wish }));
+    showAuth();
     return;
   }
   form.wish = wish;
@@ -1135,7 +1125,6 @@ async function submitWish(typed, area) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         restaurant: form.picked ? { id: form.picked.id } : form.place || { name: typed, area },
-        person: state.me,
         note: $('noteInput').value,
       }),
     });
@@ -1197,7 +1186,6 @@ async function submitRating(event) {
       body: JSON.stringify({
         restaurant,
         dish,
-        rater: state.me,
         score,
         note: $('noteInput').value,
         ...photoChange,
@@ -1352,7 +1340,10 @@ $('sort').addEventListener('change', (event) => {
   render();
 });
 $('rateButton').addEventListener('click', () => openRate({ wish: state.view === 'try' }));
-$('whoButton').addEventListener('click', () => askName());
+$('whoButton').addEventListener('click', () => {
+  if (state.me) signOut();
+  else showAuth();
+});
 
 function handleBoardClick(event) {
   const target = event.target.closest('button');
@@ -1475,20 +1466,6 @@ document.querySelectorAll('[data-close]').forEach((button) => {
   button.addEventListener('click', () => button.closest('dialog').close());
 });
 
-$('nameForm').addEventListener('submit', (event) => {
-  event.preventDefault();
-  const name = $('nameInput').value.trim();
-  if (!name) {
-    $('nameError').textContent = 'Enter a name so friends know who rated what.';
-    return;
-  }
-  const known = state.people.find((person) => person.toLowerCase() === name.toLowerCase());
-  setName(known || name);
-});
-$('people').addEventListener('click', (event) => {
-  const person = event.target.closest('[data-person]');
-  if (person) setName(person.dataset.person);
-});
 
 // Friends' new ratings show up without a reload.
 setInterval(refresh, 15000);
@@ -1504,6 +1481,4 @@ fetch('lists.json')
   .catch(() => {
     // The app works fine without the lists.
   });
-refresh().then(() => {
-  if (!state.me) askName();
-});
+refresh();

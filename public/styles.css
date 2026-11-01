@@ -184,7 +184,7 @@ button { cursor: pointer; }
 .search { position: relative; display: block; }
 .search svg { position: absolute; left: 14px; top: 13px; color: var(--muted); pointer-events: none; }
 
-input[type='text'], input[type='search'], select, textarea {
+input[type='text'], input[type='search'], input[type='password'], select, textarea {
   width: 100%;
   min-height: 46px;
   padding: 10px 14px;
@@ -539,17 +539,10 @@ input[type='range'] { width: 100%; height: 32px; margin: 8px 0 0; accent-color: 
 .form-error:empty, .form-hint:empty { display: none; }
 .form-hint { margin: 0 0 12px; font-size: 14px; color: var(--muted); }
 
-.people { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-.people:empty { display: none; }
-.person {
-  min-height: 44px;
-  padding: 6px 14px;
-  border: 1.5px solid var(--line);
-  border-radius: 999px;
-  background: transparent;
-  font-weight: 600;
-}
-.person:hover { border-color: var(--brand-text); }
+
+.auth-switch { display: block; margin: 8px auto 0; }
+.auth-error { margin: 10px 0 0; }
+.frozen-banner { margin: 0; padding: 12px 20px; background: var(--ink); color: var(--paper); font-weight: 600; text-align: center; overflow-wrap: anywhere; }
 
 .toast {
   position: fixed;

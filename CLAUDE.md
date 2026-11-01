@@ -9,6 +9,7 @@ The focus is deliberately narrow: only burgers and Caesar salads, for one group 
 - `server.js`: the Node server and API, with no dependencies. All data lives in memory and in `data/ratings.json`.
 - `public/`: the page, styles and client code, in plain JavaScript with no build step.
 - `public/lists.json`: published burger lists, entered by hand. Facts only (names, addresses, links), never review text. Lists don't give burger scores, so never present them as comparable numbers.
+- `lib/`: accounts and sessions (`auth.js`), invite codes (`invites.js`) and backups (`backup.js`).
 - `scripts/check.js`: checks the real data read-only, then tests saving on a throwaway copy.
 
 ## Commands
@@ -22,6 +23,12 @@ The focus is deliberately narrow: only burgers and Caesar salads, for one group 
 - Every data change in `server.js` goes through `commit()`, so a failed save leaves everything as it was.
 - Delete photo files only after a successful save, by returning a function from the change passed to `commit()`.
 - Escape anything people typed with `esc()` before putting it in HTML.
+
+## Accounts
+
+- A person's identity comes only from their session in `server.js`, never from a request body.
+- Responses use `view()`. Never send `db` itself, since it holds password hashes and sessions.
+- Never ask for, print or commit a real password or invite code. Test with `DATA_FILE` and generated values.
 
 ## Outside services
 
