@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Char &amp; Crouton</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Figtree:wght@400;500;600;700&family=Shrikhand&display=swap">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-dish="burger">
+  <header class="masthead">
+    <div class="wrap">
+      <div class="topbar">
+        <span class="wordmark">Char &amp; Crouton</span>
+        <button class="who" id="whoButton" type="button"></button>
+      </div>
+      <h1 id="boardTitle">The Burger Board</h1>
+      <p class="stat" id="boardStat"></p>
+      <div class="tabs" role="group" aria-label="Choose a dish">
+        <button class="tab" type="button" data-dish="burger"><span aria-hidden="true">🍔</span> Burgers</button>
+        <button class="tab" type="button" data-dish="caesar"><span aria-hidden="true">🥗</span> Caesar<span class="long"> Salads</span></button>
+        <button class="tab" type="button" data-dish="map"><span aria-hidden="true">🗺️</span> Map</button>
+        <button class="tab" type="button" data-dish="try"><span aria-hidden="true">⭐</span> Want to Try</button>
+      </div>
+    </div>
+  </header>
+  <div class="checks" aria-hidden="true"></div>
+
+  <main class="wrap">
+    <div class="controls">
+      <label class="search">
+        <span class="visually-hidden">Search restaurants</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m16.5 16.5 4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        <input id="search" type="search" placeholder="Search restaurants" autocomplete="off">
+      </label>
+      <button class="primary" id="rateButton" type="button">+ Add a rating</button>
+    </div>
+    <div class="filters">
+      <label>
+        <span class="filter-label">Person</span>
+        <select id="personFilter"></select>
+      </label>
+      <label>
+        <span class="filter-label">Location</span>
+        <select id="areaFilter"></select>
+      </label>
+      <label class="sort-filter">
+        <span class="filter-label">Sort by</span>
+        <select id="sort">
+          <option value="top">Top rated</option>
+          <option value="count">Most rated</option>
+          <option value="name">A to Z</option>
+        </select>
+      </label>
+    </div>
+    <div id="board"></div>
+    <div id="mapView" class="map-layout" hidden>
+      <div id="map" role="region" aria-label="Map of rated restaurants"></div>
+      <div id="mapPanel"></div>
+    </div>
+  </main>
+
+  <dialog id="rateDialog" class="sheet" aria-labelledby="rateTitle">
+    <form id="rateForm" method="dialog" novalidate>
+      <div class="sheet-head">
+        <h2 id="rateTitle">Add a rating</h2>
+        <button class="icon" type="button" data-close aria-label="Close">×</button>
+      </div>
+
+      <div class="field combo">
+        <label for="restaurantInput">Restaurant</label>
+        <input id="restaurantInput" type="text" maxlength="80" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="restaurantList" aria-autocomplete="list" placeholder="Start typing a name">
+        <ul id="restaurantList" class="options" role="listbox" aria-label="Matching restaurants" hidden></ul>
+        <p class="picked-location" id="pickedLocation" hidden></p>
+      </div>
+
+      <div class="field" id="areaField" hidden>
+        <label for="areaInput">Neighborhood or city <span class="optional">optional</span></label>
+        <input id="areaInput" type="text" maxlength="60" autocomplete="off" list="areaOptions" placeholder="For example: Chicago, IL">
+        <datalist id="areaOptions"></datalist>
+      </div>
+
+      <fieldset class="field" id="dishField">
+        <legend>Dish</legend>
+        <div class="choice">
+          <label><input type="radio" name="dish" value="burger"><span>🍔 Burger</span></label>
+          <label><input type="radio" name="dish" value="caesar"><span>🥗 Caesar Salad</span></label>
+        </div>
+      </fieldset>
+
+      <div class="field" id="gradeField">
+        <label for="scoreInput">Your grade</label>
+        <div class="dial">
+          <input id="scoreInput" class="score-input" type="text" inputmode="decimal" maxlength="4" autocomplete="off">
+          <span class="out-of">/ 10</span>
+          <span class="verdict" id="verdict"></span>
+        </div>
+        <input id="scoreSlider" type="range" min="1" max="10" step="0.1" aria-label="Grade slider">
+      </div>
+
+      <div class="field" id="photoField">
+        <span class="field-label">Photo <span class="optional">optional</span></span>
+        <div class="photo-row">
+          <img id="photoPreview" class="photo-preview" alt="Your photo" hidden>
+          <label class="ghost photo-pick" tabindex="0" id="photoPick">
+            <span id="photoPickText">Add a photo</span>
+            <input id="photoInput" class="visually-hidden" type="file" accept="image/*" tabindex="-1">
+          </label>
+          <button class="link" type="button" id="photoRemove" hidden>Remove</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="noteInput">Notes <span class="optional">optional</span></label>
+        <textarea id="noteInput" rows="2" maxlength="280" placeholder="Crispy edges? Too much dressing?"></textarea>
+      </div>
+
+      <p class="form-error" id="rateError" role="alert"></p>
+      <p class="form-hint" id="rateHint"></p>
+      <button class="primary wide" type="submit" id="rateSubmit">Post rating</button>
+    </form>
+  </dialog>
+
+  <dialog id="editDialog" class="sheet narrow" aria-labelledby="editTitle">
+    <form id="editForm" method="dialog" novalidate>
+      <div class="sheet-head">
+        <h2 id="editTitle">Edit restaurant</h2>
+        <button class="icon" type="button" data-close aria-label="Close">×</button>
+      </div>
+      <div class="field">
+        <label for="editName">Name</label>
+        <input id="editName" type="text" maxlength="80" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="editArea">Neighborhood or city <span class="optional">optional</span></label>
+        <input id="editArea" type="text" maxlength="60" autocomplete="off" list="areaOptions">
+      </div>
+      <div class="field">
+        <label for="editPlaceSearch">Find on the map</label>
+        <input id="editPlaceSearch" type="search" maxlength="80" autocomplete="off" placeholder="Search a name or street address, with the city">
+        <ul id="editPlaceResults" class="place-results" aria-label="Places found"></ul>
+        <p class="picked-location" id="editPlaceStatus" role="status"></p>
+      </div>
+      <p class="form-error" id="editError" role="alert"></p>
+      <button class="primary wide" type="submit" id="editSubmit">Save changes</button>
+    </form>
+  </dialog>
+
+  <dialog id="nameDialog" class="sheet narrow" aria-labelledby="nameTitle">
+    <form id="nameForm" method="dialog" novalidate>
+      <div class="sheet-head">
+        <h2 id="nameTitle">Who's rating?</h2>
+      </div>
+      <div class="people" id="people"></div>
+      <div class="field">
+        <label for="nameInput">Your name</label>
+        <input id="nameInput" type="text" maxlength="30" autocomplete="off" placeholder="First name is fine">
+      </div>
+      <p class="form-error" id="nameError" role="alert"></p>
+      <button class="primary wide" type="submit">Continue</button>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="app.js"></script>
+</body>
+</html>
