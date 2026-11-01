@@ -1471,6 +1471,11 @@ document.querySelectorAll('[data-close]').forEach((button) => {
 setInterval(refresh, 15000);
 window.addEventListener('focus', refresh);
 
+// Browsers only allow this over https or on this computer, which is fine: the app works without it.
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
 render();
 fetch('lists.json')
   .then((res) => res.json())

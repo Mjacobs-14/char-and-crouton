@@ -89,7 +89,7 @@ button { cursor: pointer; }
 .masthead {
   background: var(--brand);
   color: var(--on-brand);
-  padding: 16px 0 18px;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 0 18px;
   transition: background-color 0.25s ease;
 }
 
@@ -691,11 +691,12 @@ body[data-dish='map'] .filters, body[data-dish='try'] .filters { grid-template-c
   .filters, body[data-dish='map'] .filters, body[data-dish='try'] .filters { display: none; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .filters.open, body[data-dish='map'] .filters.open, body[data-dish='try'] .filters.open { display: grid; }
   /* Rating is the main thing you do at the table, so it stays under your thumb. */
-  #rateButton { position: fixed; z-index: 20; left: 16px; right: 16px; bottom: 16px; min-height: 54px; box-shadow: 0 6px 18px rgb(0 0 0 / 0.3); }
+  #rateButton { position: fixed; z-index: 20; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); min-height: 54px; box-shadow: 0 6px 18px rgb(0 0 0 / 0.3); }
   #board, .map-layout { padding-bottom: 96px; }
   .toast { bottom: 84px; }
   .tab { font-size: 13.5px; padding: 6px 2px; }
   #rateDialog { width: 100vw; max-width: none; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; }
+  #rateDialog .sheet-head { padding-top: calc(16px + env(safe-area-inset-top, 0px)); }
   .filters label:last-child { grid-column: 1 / -1; }
   .unrated { flex-wrap: wrap; }
   .row-main { grid-template-columns: 26px minmax(0, 1fr) auto 18px; gap: 8px; padding: 10px 10px 10px 6px; }

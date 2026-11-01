@@ -6,6 +6,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const createAuth = require('./lib/auth');
 const { automaticBackup } = require('./lib/backup');
+const createAdmin = require('./lib/admin');
 
 const PORT = Number(process.env.PORT) || 4173;
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'ratings.json');
@@ -16,6 +17,21 @@ const PHOTO_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
 const PHOTON_HEADERS = { 'User-Agent': 'CharAndCrouton/1.0' };
 const DISHES = ['burger', 'caesar'];
+// Only needs the map, fonts and map library from elsewhere. Scripts can't run from anywhere else.
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' https://unpkg.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com",
+  'font-src https://fonts.gstatic.com',
+  "img-src 'self' data: blob: https://tile.openstreetmap.org https://unpkg.com",
+  "connect-src 'self'",
+  "manifest-src 'self'",
+  "worker-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
 const PLACES_URL = 'https://photon.komoot.io/api/';
 const PLACES_REVERSE_URL = 'https://photon.komoot.io/reverse';
 const PLACE_TAGS = ['restaurant', 'fast_food', 'pub', 'bar', 'cafe', 'food_court', 'biergarten'];
@@ -35,6 +51,8 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.png': 'image/png',
 };
 
 function load() {
@@ -88,6 +106,7 @@ const same = (a, b) => a.toLowerCase() === b.toLowerCase();
 
 class BadRequest extends Error {}
 
+const admin = createAdmin({ db, commit, dataFile: DATA_FILE, photoDir: PHOTO_DIR, sendJson });
 const auth = createAuth({ db, commit, dataFile: DATA_FILE, BadRequest, isFrozen: () => Boolean(frozenMessage()) });
 
 function frozenMessage() {
@@ -461,7 +480,15 @@ const server = http.createServer(async (req, res) => {
   try {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
+    if (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-proto'] === 'https') {
+      res.setHeader('Strict-Transport-Security', 'max-age=15552000');
+    }
     const { pathname, searchParams } = new URL(req.url, 'http://localhost');
+    if (pathname.startsWith('/api/admin/')) {
+      await admin(req, res, pathname);
+      return;
+    }
     if (pathname === '/api/login' && req.method === 'POST') {
       await auth.login(req, res, await readJson(req));
       sendJson(res, 200, { ok: true });

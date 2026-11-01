@@ -9,7 +9,8 @@ The focus is deliberately narrow: only burgers and Caesar salads, for one group 
 - `server.js`: the Node server and API, with no dependencies. All data lives in memory and in `data/ratings.json`.
 - `public/`: the page, styles and client code, in plain JavaScript with no build step.
 - `public/lists.json`: published burger lists, entered by hand. Facts only (names, addresses, links), never review text. Lists don't give burger scores, so never present them as comparable numbers.
-- `lib/`: accounts and sessions (`auth.js`), invite codes (`invites.js`) and backups (`backup.js`).
+- `lib/`: accounts and sessions (`auth.js`), invite codes (`invites.js`), backups (`backup.js`) and owner tools for a hosted copy (`admin.js`).
+- `public/sw.js`, `public/manifest.webmanifest`: make the app installable. The service worker must never store `/api/` or `/photos/`.
 - `scripts/check.js`: checks the real data read-only, then tests saving on a throwaway copy.
 
 ## Commands
@@ -28,7 +29,8 @@ The focus is deliberately narrow: only burgers and Caesar salads, for one group 
 
 - A person's identity comes only from their session in `server.js`, never from a request body.
 - Responses use `view()`. Never send `db` itself, since it holds password hashes and sessions.
-- Never ask for, print or commit a real password or invite code. Test with `DATA_FILE` and generated values.
+- `ADMIN_TOKEN` is the key to all data. It belongs only in the host's settings, and the admin routes don't exist without it.
+- Never ask for, print or commit a real password, invite code or admin token. Test with `DATA_FILE` and generated values.
 
 ## Outside services
 

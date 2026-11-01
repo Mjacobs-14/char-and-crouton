@@ -34,6 +34,32 @@ Restaurant suggestions come from [Photon](https://photon.komoot.io), a free sear
 
 The app makes a dated copy of your ratings and photos in `data/backups` once a day, keeping the last 14. Run `npm run backup` for one that's kept until you delete it. To restore, stop the app and copy a backup's `ratings.json` and `photos` back into `data`.
 
+## Going online
+
+The app can run on any host with permanent storage. On Railway:
+
+1. Create a project from this GitHub repository, and generate a public domain under **Settings > Networking**.
+2. Add a volume to the service, mounted at `/data`.
+3. Run `node scripts/host.js token` on your computer, and keep the result somewhere private.
+4. Set these variables on the service:
+   - `DATA_FILE` = `/data/ratings.json`
+   - `TRUST_PROXY` = `1`
+   - `AUTO_BACKUP_PHOTOS` = `0`
+   - `ADMIN_TOKEN` = the token from step 3
+5. Freeze and back up your computer's copy, then upload it to the empty host:
+
+   ```
+   node scripts/freeze.js "We've moved: https://your-link"
+   node scripts/backup.js
+   node scripts/host.js push
+   ```
+
+The upload checks that the host's copy matches, and it refuses to run if the host already has data. Everyone signs in again at the new link with their existing password.
+
+On the host, invite people with `node scripts/host.js invite Name`, and save a backup to your computer with `node scripts/host.js pull`. Run the pull regularly, since the host's own automatic backups live on the same disk.
+
+On iPhone, install it from Safari with **Share > Add to Home Screen**. On Android, use **Install app** or **Add to Home screen** in Chrome's menu.
+
 ## Moving the app
 
 To keep one live copy, run `npm run freeze -- "We've moved: <new link>"` before copying your data. Nobody can change anything from that moment, and everyone sees the message. Undo it with `npm run freeze -- off`.

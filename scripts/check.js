@@ -31,8 +31,8 @@ function audit(db, photoDir, label) {
   ok(`${label}: no orphaned photo files`, orphans.length === 0, `${files.length} files, ${orphans.length} orphans`);
 }
 
-function start(file, port) {
-  const child = spawn('node', ['server.js'], { cwd: APP, env: { ...process.env, DATA_FILE: file, PORT: port }, stdio: 'pipe' });
+function start(file, port, extra = {}) {
+  const child = spawn('node', ['server.js'], { cwd: APP, env: { ...process.env, ADMIN_TOKEN: '', TRUST_PROXY: '', DATA_FILE: file, PORT: port, ...extra }, stdio: 'pipe' });
   child.stderrText = '';
   child.stderr.on('data', (d) => { child.stderrText += d; });
   return child;
@@ -286,6 +286,72 @@ async function auditRealApp() {
   ok('a backup is an exact copy', fs.readFileSync(path.join(made, 'ratings.json'), 'utf8') === fs.readFileSync(file, 'utf8'));
   ok('an automatic backup was made on startup', fs.readdirSync(path.join(dir, 'backups')).some((name) => name.startsWith('auto_')));
   await stop(server);
+
+  console.log('--- Copy: moving to a host ---');
+  seed();
+  const hostDir = fs.mkdtempSync(path.join(os.tmpdir(), 'burger-host-'));
+  const hostFile = path.join(hostDir, 'ratings.json');
+  const hostBase = 'http://localhost:4177';
+  const token = randomBytes(32).toString('hex');
+  server = start(file, 4175);
+  await waitUp(base);
+  ok('admin tools do not exist without a token', (await fetch(`${base}/api/admin/export`)).status === 404);
+  await stop(server);
+  const homeFile = JSON.parse(fs.readFileSync(file, 'utf8'));
+  homeFile.accounts = [{ person: 'Matt', password: 'not-a-real-hash:00' }];
+  homeFile.sessions = [{ tokenHash: 'old', person: 'Matt', expires: Date.now() + 100000 }];
+  fs.writeFileSync(file, JSON.stringify(homeFile));
+  fs.mkdirSync(path.join(dir, 'photos'), { recursive: true });
+  const movedPhoto = '00000000-0000-4000-8000-000000000001';
+  fs.writeFileSync(path.join(dir, 'photos', `${movedPhoto}.jpg`), jpeg);
+  const host = start(hostFile, 4177, { ADMIN_TOKEN: token, TRUST_PROXY: '1', AUTO_BACKUP_PHOTOS: '0' });
+  await waitUp(hostBase);
+  const hostScript = (args, tokenValue = token) => execFileSync('node', ['scripts/host.js', ...args], {
+    cwd: APP,
+    env: { ...process.env, DATA_FILE: file, HOST_URL: hostBase, ADMIN_TOKEN: tokenValue },
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  ok('wrong admin token is refused', (await fetch(`${hostBase}/api/admin/export`, { headers: { Authorization: 'Bearer wrong' } })).status === 401);
+  ok('upload is verified', /Uploaded and verified/.test(hostScript(['push'])));
+  const exported = await (await fetch(`${hostBase}/api/admin/export`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  ok('everything arrives, including accounts and photos', JSON.stringify(exported.data.ratings) === JSON.stringify(homeFile.ratings) && exported.data.accounts.length === 1 && exported.photos[movedPhoto] === jpeg.toString('base64'));
+  ok('old sign-ins do not move', !('sessions' in exported.data) && JSON.parse(fs.readFileSync(hostFile, 'utf8')).sessions.length === 0);
+  let refused = false;
+  try { hostScript(['push']); } catch (err) { refused = /already has data/.test(err.stderr); }
+  ok('a second upload can never overwrite the host', refused);
+  ok('invites can be made remotely', /Code: /.test(hostScript(['invite', 'Sam'])));
+  const hostInvite = hostScript(['invite', 'Remote Pal']).match(/Code: (\S+)/)[1];
+  const hostPerson = client(hostBase);
+  const claimedHost = await hostPerson.send('/api/claim', { code: hostInvite, password: randomBytes(12).toString('hex') });
+  ok('a remote invite works', claimedHost.status === 200 && (await hostPerson.state()).me === 'Remote Pal');
+  const forwarded = async (ip, code) => fetch(`${hostBase}/api/claim`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip }, body: JSON.stringify({ code, password: randomBytes(12).toString('hex') }) });
+  for (let i = 0; i < 5; i += 1) await forwarded('203.0.113.1', 'BAD-CODE');
+  ok('wrong codes lock out only that visitor', (await forwarded('203.0.113.1', 'BAD-CODE')).status === 429 && (await forwarded('203.0.113.2', 'BAD-CODE')).status === 400);
+  ok('a visitor cannot dodge the lock with a fake address', (await forwarded('198.51.100.9, 203.0.113.1', 'BAD-CODE')).status === 429);
+  const httpsLogin = await fetch(`${hostBase}/api/claim`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-Proto': 'https', 'X-Forwarded-For': '203.0.113.3' }, body: JSON.stringify({ code: hostScript(['invite', 'Secure Pal']).match(/Code: (\S+)/)[1], password: randomBytes(12).toString('hex') }) });
+  ok('on https, the sign-in cookie is https-only', /; Secure/.test(httpsLogin.headers.get('set-cookie')));
+  ok('on https, browsers are told to stay on https', Boolean(httpsLogin.headers.get('strict-transport-security')));
+  const pulled = hostScript(['pull']).match(/to (.+)$/m)[1].trim();
+  ok('off-site backup matches the host', JSON.stringify(JSON.parse(fs.readFileSync(path.join(pulled, 'ratings.json'), 'utf8')).ratings) === JSON.stringify(JSON.parse(fs.readFileSync(hostFile, 'utf8')).ratings) && fs.existsSync(path.join(pulled, 'photos', `${movedPhoto}.jpg`)));
+  await stop(host);
+  const hostAgain = start(hostFile, 4177, { ADMIN_TOKEN: token, TRUST_PROXY: '1', AUTO_BACKUP_PHOTOS: '0' });
+  await waitUp(hostBase);
+  ok('data on the host survives a restart', JSON.parse(fs.readFileSync(hostFile, 'utf8')).ratings.length === homeFile.ratings.length && fs.existsSync(path.join(hostDir, 'photos', `${movedPhoto}.jpg`)));
+  const hostBackups = fs.readdirSync(path.join(hostDir, 'backups'));
+  ok('automatic backups on the host skip photos', hostBackups.length > 0 && hostBackups.every((name) => !fs.existsSync(path.join(hostDir, 'backups', name, 'photos'))));
+  let httpRefused = false;
+  try {
+    execFileSync('node', ['scripts/host.js', 'pull'], { cwd: APP, env: { ...process.env, DATA_FILE: file, HOST_URL: 'http://example.com', ADMIN_TOKEN: token }, stdio: 'pipe' });
+  } catch (err) { httpRefused = /must start with https/.test(String(err.stderr)); }
+  ok('owner tools refuse an unencrypted link', httpRefused);
+  const page = await fetch(hostBase);
+  ok('browser security rules are on', /frame-ancestors 'none'/.test(page.headers.get('content-security-policy')));
+  for (const asset of ['/manifest.webmanifest', '/sw.js', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png']) {
+    ok(`serves ${asset}`, (await fetch(hostBase + asset)).status === 200);
+  }
+  await stop(hostAgain);
+  fs.rmSync(hostDir, { recursive: true, force: true });
 
   fs.rmSync(dir, { recursive: true, force: true });
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
