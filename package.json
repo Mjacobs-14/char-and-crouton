@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Rate burgers and Caesar salads with your friends.",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "start": "node server.js",
     "check": "node scripts/check.js",

@@ -20,6 +20,8 @@ Rate burgers and Caesar salads with your friends, on a 1.0 to 10.0 scale.
 - **A shared map:** every restaurant pinned with its scores, plus a want-to-try list and the critics' picks.
 - **Private to your group:** invite-only accounts, and it runs free on Cloudflare or on your own computer.
 
+**Want this for tacos and margaritas, or any two foods?** Follow [Make your own version](MAKE-YOUR-OWN.md). The code is free to use under the [MIT license](LICENSE).
+
 Screenshots use made-up people and restaurants from `scripts/demo-data.json`. To retake them, run `node scripts/screenshots.js`.
 
 ## Run it
