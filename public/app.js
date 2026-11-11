@@ -546,7 +546,214 @@ function mapEntries() {
     .filter((e) => e.burger.length || e.caesar.length || e.wishes.length);
 }
 
-const leaflet = { map: null, pins: null, fittedTo: null };
+const leaflet = { map: null, pins: null, fittedTo: null, explore: null, circle: null, handle: null };
+
+/* Explore: a circle on the map that lists places inside it, to save to Want to Try. */
+const EXPLORE_SIZES = [[402, '¼ mile'], [805, '½ mile'], [1609, '1 mile']];
+const EXPLORE_MAX_RESULTS = 80;
+const explore = { on: false, center: null, radius: 805, places: [], more: false, loadingMore: false, status: '', token: 0, timer: null };
+
+function exploreBarHtml() {
+  if (!explore.on) {
+    return '<button class="ghost" type="button" data-explore="on">🔍 Explore nearby</button>'
+      + '<span class="explore-hint">Find places around you or anywhere on the map, and save them to Want to Try.</span>';
+  }
+  const sizes = EXPLORE_SIZES.map(([meters, label]) => `<button class="chip" type="button" data-explore-size="${meters}" aria-pressed="${explore.radius === meters}">${label}</button>`).join('');
+  return `<span class="chips" role="group" aria-label="Circle size">${sizes}</span>
+    <button class="ghost" type="button" data-explore="off">Done</button>
+    ${canLocate() ? '<button class="link" type="button" data-explore="here">📍 Use my location</button>' : ''}
+    <span class="explore-hint explore-tip">Drag the circle's center, or tap the map, to move it.</span>`;
+}
+
+function setExploreCenter(latlng, { pan = false } = {}) {
+  explore.center = { lat: latlng.lat, lon: latlng.lng ?? latlng.lon };
+  const point = [explore.center.lat, explore.center.lon];
+  leaflet.circle.setLatLng(point).setRadius(explore.radius);
+  leaflet.handle.setLatLng(point);
+  searchExplore();
+  if (pan) {
+    leaflet.map.invalidateSize();
+    leaflet.map.fitBounds(leaflet.circle.getBounds(), { padding: [20, 20] });
+  }
+}
+
+function startExplore() {
+  if (!leaflet.map) return;
+  explore.on = true;
+  const start = leaflet.map.getCenter();
+  leaflet.circle = L.circle(start, { radius: explore.radius, color: '#24405c', weight: 2, fillColor: '#24405c', fillOpacity: 0.08, interactive: false }).addTo(leaflet.map);
+  leaflet.handle = L.marker(start, {
+    draggable: true,
+    keyboard: true,
+    title: 'Center of the circle. Drag to move it.',
+    alt: 'Center of the circle',
+    icon: L.divIcon({ className: 'explore-handle-anchor', html: '<div class="explore-handle"></div>', iconSize: null }),
+  }).addTo(leaflet.map);
+  leaflet.handle.on('drag', (event) => leaflet.circle.setLatLng(event.target.getLatLng()));
+  leaflet.handle.on('dragend', (event) => setExploreCenter(event.target.getLatLng()));
+  leaflet.map.on('click', onExploreMapClick);
+  setExploreCenter(start, { pan: true });
+}
+
+function onExploreMapClick(event) {
+  setExploreCenter(event.latlng);
+}
+
+function stopExplore() {
+  explore.on = false;
+  explore.places = [];
+  explore.status = '';
+  explore.token += 1;
+  leaflet.map.off('click', onExploreMapClick);
+  leaflet.explore.clearLayers();
+  leaflet.circle.remove();
+  leaflet.handle.remove();
+  render();
+}
+
+function exploreHere() {
+  explore.status = 'Finding your location…';
+  render();
+  navigator.geolocation.getCurrentPosition(
+    ({ coords }) => setExploreCenter({ lat: coords.latitude, lng: coords.longitude }, { pan: true }),
+    () => {
+      explore.status = "Couldn't get your location. Drag the circle instead.";
+      render();
+    },
+    { timeout: 8000, maximumAge: 60000 },
+  );
+}
+
+function searchExplore() {
+  clearTimeout(explore.timer);
+  explore.token += 1;
+  const token = explore.token;
+  explore.status = 'Searching…';
+  render();
+  explore.timer = setTimeout(async () => {
+    const params = new URLSearchParams({ lat: explore.center.lat, lon: explore.center.lon, radius: explore.radius });
+    let found;
+    try {
+      found = await api(`/api/explore?${params}`);
+    } catch (err) {
+      if (token !== explore.token) return;
+      explore.places = [];
+      explore.status = err.message;
+      render();
+      return;
+    }
+    if (token !== explore.token) return;
+    explore.places = found.places;
+    explore.more = false;
+    explore.status = '';
+    explore.loadingMore = found.hasEdges;
+    render();
+    if (!found.hasEdges) return;
+    // The nearest places are showing; now fill in toward the edge of the circle.
+    params.set('part', 'edge');
+    try {
+      const edge = await api(`/api/explore?${params}`);
+      if (token !== explore.token) return;
+      const all = new Map(explore.places.map((place) => [place.placeId, place]));
+      for (const place of edge.places) if (!all.has(place.placeId)) all.set(place.placeId, place);
+      const sorted = [...all.values()].sort((a, b) => a.meters - b.meters);
+      explore.places = sorted.slice(0, EXPLORE_MAX_RESULTS);
+      explore.more = sorted.length > EXPLORE_MAX_RESULTS;
+    } catch {
+      // The nearest places are still useful on their own.
+    }
+    if (token !== explore.token) return;
+    explore.loadingMore = false;
+    render();
+  }, 300);
+}
+
+const knownPlace = (place) => state.restaurants.find((r) => r.placeId === place.placeId);
+
+function renderExplorePins() {
+  leaflet.explore.clearLayers();
+  if (!explore.on) return;
+  for (const place of explore.places) {
+    // Places already on the board keep their own pin with scores.
+    if (knownPlace(place)) continue;
+    const marker = L.marker([place.lat, place.lon], {
+      title: place.name,
+      alt: place.name,
+      icon: L.divIcon({ className: 'explore-dot-anchor', html: '<div class="explore-dot"></div>', iconSize: null }),
+    });
+    marker.on('click', () => {
+      const row = document.querySelector(`[data-explore-row="${CSS.escape(place.placeId)}"]`);
+      if (row) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.classList.add('flash');
+        setTimeout(() => row.classList.remove('flash'), 1200);
+      }
+    });
+    leaflet.explore.addLayer(marker);
+  }
+}
+
+function exploreRowHtml(place) {
+  const known = knownPlace(place);
+  const where = [formatDistance(place.meters), place.address].filter(Boolean).join(' · ');
+  let status = '';
+  let actions = '';
+  if (known) {
+    const part = (emoji, dish) => {
+      const ratings = allRatingsFor(known.id, dish);
+      return ratings.length ? `${emoji}\u00a0${fmt(average(ratings))}` : '';
+    };
+    const mine = state.wishes.some((w) => w.restaurantId === known.id && isMe(w.person));
+    status = [part('🍔', 'burger'), part('🥗', 'caesar'), mine ? '⭐ On your list' : ''].filter(Boolean).join(' · ') || 'On the board';
+    actions = `<button class="link" type="button" data-explore-view="${known.id}">View</button>
+      ${mine ? '' : `<button class="link" type="button" data-wish="${known.id}">Save</button>`}`;
+  } else {
+    actions = `<button class="link" type="button" data-explore-save="${esc(place.placeId)}" aria-label="Save ${esc(place.name)} to Want to Try">Save</button>`;
+  }
+  return `
+    <div class="unrated explore-row" data-explore-row="${esc(place.placeId)}">
+      <span class="place">
+        <span class="place-name">${esc(place.name)}</span>
+        <span class="place-meta">${esc(where)}</span>
+        ${status ? `<span class="place-meta explore-status">${esc(status)}</span>` : ''}
+      </span>
+      <span class="wish-actions">
+        ${actions}
+        <button class="ghost" type="button" data-explore-rate="${esc(place.placeId)}" aria-label="Rate ${esc(place.name)}">Rate it</button>
+      </span>
+    </div>`;
+}
+
+function exploreListHtml() {
+  const label = (EXPLORE_SIZES.find(([meters]) => meters === explore.radius) || [0, ''])[1];
+  const shown = explore.places.filter((p) => matches({ name: p.name, area: p.area }, state.query));
+  let heading = explore.status;
+  if (!heading) {
+    heading = shown.length
+      ? `${shown.length} place${shown.length === 1 ? '' : 's'} within ${label}${explore.more ? ', nearest first' : ''}${explore.loadingMore ? '. Looking further out…' : ''}`
+      : 'Nothing listed here. Try moving or growing the circle.';
+  }
+  return `<h2 class="section-label" role="status">${esc(heading)}</h2>${explore.status ? '' : shown.map(exploreRowHtml).join('')}`;
+}
+
+async function saveExplorePlace(placeId) {
+  const place = explore.places.find((p) => p.placeId === placeId);
+  if (!place) return;
+  if (!state.me) {
+    showAuth();
+    return;
+  }
+  try {
+    applyData(await api('/api/wishes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ restaurant: place, note: '' }),
+    }));
+    toast(`Saved ${place.name} to Want to Try.`);
+  } catch (err) {
+    toast(err.message);
+  }
+}
 
 function pinHtml(entry) {
   const part = (emoji, ratings) => (ratings.length ? `<span>${emoji} ${fmt(average(ratings))}</span>` : '');
@@ -564,6 +771,7 @@ function setupMap() {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(leaflet.map);
   leaflet.pins = L.layerGroup().addTo(leaflet.map);
+  leaflet.explore = L.layerGroup().addTo(leaflet.map);
 }
 
 function selectOnMap(id) {
@@ -591,7 +799,7 @@ function renderPins(entries) {
   }
   // Only reframe when the set of pins changes, so a background refresh doesn't move the map.
   const key = pinned.map((e) => e.restaurant.id).sort().join();
-  if (pinned.length && key !== leaflet.fittedTo) {
+  if (pinned.length && key !== leaflet.fittedTo && !explore.on) {
     const bounds = L.latLngBounds(pinned.map((e) => [e.restaurant.lat, e.restaurant.lon]));
     leaflet.map.fitBounds(bounds, { padding: [70, 70], maxZoom: 15 });
   }
@@ -647,13 +855,18 @@ function panelHtml(entry) {
 function renderMap() {
   setupMap();
   const entries = mapEntries();
-  if (leaflet.map) renderPins(entries);
+  $('exploreBar').innerHTML = leaflet.map ? exploreBarHtml() : '';
+  if (leaflet.map) {
+    renderPins(entries);
+    renderExplorePins();
+  }
   else $('map').innerHTML = '<p class="map-message">The map needs an internet connection. Refresh to try again.</p>';
 
   const selected = entries.find((e) => e.restaurant.id === state.mapSelected);
   const unpinned = entries.filter((e) => !hasCoords(e.restaurant)).map((e) => e.restaurant).sort(byName);
   let html = selected
     ? panelHtml(selected)
+    : explore.on ? ''
     : `<div class="panel"><h2>${entries.length ? 'Click a pin' : 'Nothing to show'}</h2><p class="place-address">${entries.length ? 'See every grade and note, and find the restaurant\'s website.' : 'No rated restaurants match those filters.'}</p></div>`;
   if (unpinned.length) {
     html += '<h2 class="section-label">Not on the map yet</h2>';
@@ -666,6 +879,7 @@ function renderMap() {
         <button class="ghost" type="button" data-edit-restaurant="${r.id}" aria-label="Find ${esc(r.name)} on the map">Find it</button>
       </div>`).join('');
   }
+  if (explore.on) html += exploreListHtml();
   $('mapPanel').innerHTML = html;
 }
 
@@ -1076,7 +1290,7 @@ function moveOption(step) {
   $('restaurantInput').setAttribute('aria-activedescendant', options[form.activeOption].id);
 }
 
-function openRate({ restaurantId = null, name = '', dish = state.dish, wish = false } = {}) {
+function openRate({ restaurantId = null, name = '', dish = state.dish, wish = false, place = null } = {}) {
   if (!state.me) {
     showAuth();
     return;
@@ -1107,9 +1321,10 @@ function openRate({ restaurantId = null, name = '', dish = state.dish, wish = fa
   const restaurant = state.restaurants.find((r) => r.id === restaurantId);
   themeRateDialog();
   if (restaurant) pickRestaurant(restaurant);
+  else if (place) pickPlace(place);
   else syncExisting();
   $('rateDialog').showModal();
-  if (!restaurant) {
+  if (!restaurant && !place) {
     $('restaurantInput').focus();
     if (name) showOptions();
     else showNearby();
@@ -1365,6 +1580,13 @@ function handleBoardClick(event) {
     openRate({ wish: true, name: target.dataset.pickSave });
   } else if (target.dataset.pickRate) {
     openRate({ name: target.dataset.pickRate, dish: state.dish });
+  } else if (target.dataset.exploreSave) {
+    saveExplorePlace(target.dataset.exploreSave);
+  } else if (target.dataset.exploreRate) {
+    const place = explore.places.find((p) => p.placeId === target.dataset.exploreRate);
+    if (place) openRate({ place, dish: state.dish });
+  } else if (target.dataset.exploreView) {
+    selectOnMap(target.dataset.exploreView);
   } else if (target.dataset.wish) {
     addWish(target.dataset.wish);
   } else if (target.dataset.unwish) {
@@ -1386,6 +1608,17 @@ $('board').addEventListener('toggle', (event) => {
   if (fold && !state.query.trim()) state.folds[fold] = event.target.open;
 }, true);
 $('mapPanel').addEventListener('click', handleBoardClick);
+$('exploreBar').addEventListener('click', (event) => {
+  const button = event.target.closest('button');
+  if (!button) return;
+  if (button.dataset.explore === 'on') startExplore();
+  else if (button.dataset.explore === 'off') stopExplore();
+  else if (button.dataset.explore === 'here') exploreHere();
+  else if (button.dataset.exploreSize) {
+    explore.radius = Number(button.dataset.exploreSize);
+    setExploreCenter({ lat: explore.center.lat, lng: explore.center.lon }, { pan: true });
+  }
+});
 
 $('editPlaceSearch').addEventListener('input', searchEditPlaces);
 $('editPlaceResults').addEventListener('click', (event) => {

@@ -219,6 +219,7 @@ async function auditRealApp() {
   ok('signed-out visitors get no data', (await stranger.request('/api/state')).status === 401);
   ok('signed-out visitors cannot post', (await stranger.send('/api/ratings', { restaurant: { name: 'Nope' }, dish: 'burger', score: 5 })).status === 401);
   ok('signed-out visitors cannot search', (await stranger.request('/api/places?q=burger')).status === 401);
+  ok('signed-out visitors cannot explore', (await stranger.request('/api/explore?lat=42.35&lon=-71.05')).status === 401);
 
   const inviteCode = invite(file, 'Matt');
   ok('invite codes are not stored in the clear', !fs.readFileSync(path.join(dir, 'invites.json'), 'utf8').includes(inviteCode.replace(/-/g, '')));
@@ -231,6 +232,7 @@ async function auditRealApp() {
   ok('an invite only works once', (await client(base).send('/api/claim', { code: inviteCode, password })).status === 400);
   const mine = await newcomer.state();
   ok('the account is matched to the existing name', mine.me === 'Matt');
+  ok('exploring without a location is refused', (await newcomer.request('/api/explore')).status === 400);
   ok('existing ratings stay with their person', mine.ratings.filter((r) => r.rater === 'Matt').length === JSON.parse(fs.readFileSync(file, 'utf8')).ratings.filter((r) => r.rater === 'Matt').length);
   ok('password hashes never reach the page', !('accounts' in mine) && !('sessions' in mine));
   const disk = fs.readFileSync(file, 'utf8');

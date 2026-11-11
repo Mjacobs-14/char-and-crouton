@@ -5,7 +5,7 @@ import { claim, currentPerson, isFrozen, login, logout, sessionCookie } from './
 import { handleAdmin } from './admin.js';
 import { PHOTO_ID, deleteRating, deleteWish, everything, saveRating, saveWish, toRestaurant, updateRestaurant } from './data.js';
 
-const { BadRequest, fetchWebsite, groupCenter, searchNearby, searchPlaces } = shared;
+const { BadRequest, exploreArea, fetchWebsite, groupCenter, searchNearby, searchPlaces } = shared;
 const SESSION_SECONDS = 90 * 24 * 60 * 60;
 // Leaves room under D1's 2 MB per row. Photos are shrunk well below this in the browser.
 const MAX_PHOTO_BYTES = 1_900_000;
@@ -123,6 +123,15 @@ async function route(request, env) {
       if (err instanceof BadRequest) throw err;
       console.error(`Nearby search failed: ${err.message}`);
       return json(502, { error: 'Nearby search is unavailable right now.' });
+    }
+  }
+  if (pathname === '/api/explore' && method === 'GET') {
+    try {
+      return json(200, await exploreArea(searchParams));
+    } catch (err) {
+      if (err instanceof BadRequest) throw err;
+      console.error(`Explore search failed: ${err.message}`);
+      return json(502, { error: 'Exploring is unavailable right now.' });
     }
   }
   if (pathname === '/api/ratings' && method === 'POST') {

@@ -605,6 +605,50 @@ body[data-dish='map'] .filters, body[data-dish='try'] .filters { grid-template-c
 
 .map-message { padding: 24px; color: var(--muted); }
 
+.explore-bar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.explore-hint { flex: 1 1 220px; font-size: 14px; color: var(--muted); }
+.chips { display: inline-flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--track); }
+.chip {
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+}
+.chip[aria-pressed='true'] { background: var(--card); color: var(--brand-text); }
+
+/* The draggable center of the explore circle. */
+.explore-handle-anchor { width: 0; height: 0; }
+.explore-handle {
+  position: absolute;
+  left: -14px;
+  top: -14px;
+  width: 28px;
+  height: 28px;
+  border: 3px solid #fffdf7;
+  border-radius: 50%;
+  background: #24405c;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.4);
+  cursor: grab;
+}
+.explore-dot-anchor { width: 0; height: 0; }
+.explore-dot {
+  position: absolute;
+  left: -8px;
+  top: -8px;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #fffdf7;
+  border-radius: 50%;
+  background: #f4b82e;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+  cursor: pointer;
+}
+.explore-status { color: var(--brand-text); font-weight: 600; }
+.explore-row.flash { border-color: var(--brand-text); border-style: solid; }
+
 /* The pill sits above its point, with a small tail marking the exact spot. */
 .pin-anchor { width: 0; height: 0; }
 .pin {
@@ -695,6 +739,10 @@ body[data-dish='map'] .filters, body[data-dish='try'] .filters { grid-template-c
   #board, .map-layout { padding-bottom: 96px; }
   .toast { bottom: 84px; }
   .tab { font-size: 13.5px; padding: 6px 2px; }
+  .explore-bar { gap: 8px; }
+  .explore-bar .ghost { min-height: 44px; padding: 6px 12px; }
+  .explore-tip { flex-basis: 100%; font-size: 13px; }
+  .chip { padding: 6px 9px; }
   #rateDialog { width: 100vw; max-width: none; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; }
   #rateDialog .sheet-head { padding-top: calc(16px + env(safe-area-inset-top, 0px)); }
   .filters label:last-child { grid-column: 1 / -1; }

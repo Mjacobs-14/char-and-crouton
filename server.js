@@ -8,7 +8,7 @@ const createAuth = require('./lib/auth');
 const { automaticBackup } = require('./lib/backup');
 const createAdmin = require('./lib/admin');
 const {
-  DISHES, BadRequest, clean, isValidScore, placeDetails, groupCenter, searchPlaces, searchNearby, fetchWebsite,
+  DISHES, BadRequest, clean, isValidScore, placeDetails, groupCenter, searchPlaces, searchNearby, exploreArea, fetchWebsite,
 } = require('./lib/shared');
 
 const PORT = Number(process.env.PORT) || 4173;
@@ -401,6 +401,14 @@ const server = http.createServer(async (req, res) => {
         if (err instanceof BadRequest) throw err;
         console.error(`Nearby search failed: ${err.message}`);
         sendJson(res, 502, { error: 'Nearby search is unavailable right now.' });
+      }
+    } else if (pathname === '/api/explore' && req.method === 'GET') {
+      try {
+        sendJson(res, 200, await exploreArea(searchParams));
+      } catch (err) {
+        if (err instanceof BadRequest) throw err;
+        console.error(`Explore search failed: ${err.message}`);
+        sendJson(res, 502, { error: 'Exploring is unavailable right now.' });
       }
     } else if (pathname === '/api/photos' && req.method === 'POST') {
       sendJson(res, 200, { id: savePhoto(await readPhotoBody(req)) });
