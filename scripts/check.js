@@ -133,9 +133,33 @@ async function auditRealApp() {
   const photo = await upload();
   await post('/api/ratings', { restaurant: { name: 'Verify Grill', area: 'Testville, MA' }, dish: 'burger', score: 7.3, note: 'first', photo });
   await sam.send('/api/wishes', { restaurant: { placeId: 'osm:N999', name: 'Verify Wish', area: 'Testville, MA', address: '1 Main', lat: 42, lon: -71 }, note: 'try it' });
+
+  // The board's small copies of photos.
+  const thumb = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9]);
+  const putThumb = (id, body = thumb) => matt.request(`/api/thumbs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body });
+  const getThumb = async (id) => Buffer.from(await (await matt.request(`/photos/${id}.thumb.jpg`)).arrayBuffer());
+  const missing = async () => (await (await matt.request('/api/thumbs/missing')).json()).ids;
+  ok('without a small copy, the full photo stands in', (await getThumb(photo)).equals(jpeg));
+  ok('photos without a small copy are listed', (await missing()).includes(photo));
+  ok('a small copy saves', (await putThumb(photo)).status === 200);
+  ok('the small copy is served', (await getThumb(photo)).equals(thumb));
+  ok('a photo with a small copy is no longer listed', !(await missing()).includes(photo));
+  ok('a small copy needs its photo', (await putThumb('00000000-0000-4000-8000-00000000dead')).status === 404);
+  ok('a small copy must be a JPEG', (await putThumb(photo, 'not a photo')).status === 400);
+  ok('small copies need signing in', (await fetch(`${base}/photos/${photo}.thumb.jpg`)).status === 401);
+
   await stop(server); // Hard kill: nothing gets a chance to flush on the way out.
+  // Pretend everyone signed in ten days ago, so using the app should renew the sign-in.
+  const DAY = 24 * 60 * 60 * 1000;
+  const aged = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const session of aged.sessions) session.expires = Date.now() + 80 * DAY;
+  fs.writeFileSync(file, JSON.stringify(aged));
   server = start(file, 4175);
   await waitUp(base);
+  const renewed = await matt.request('/api/state');
+  ok('using the app renews the sign-in', /Max-Age=7776000/.test(renewed.headers.get('set-cookie') || ''));
+  ok('the renewal is saved', JSON.parse(fs.readFileSync(file, 'utf8')).sessions.some((x) => x.expires > Date.now() + 89 * DAY));
+  ok('a sign-in renews at most once a day', !(await matt.request('/api/state')).headers.get('set-cookie'));
   let s = await matt.state();
   ok('sign-ins survive a restart', Array.isArray(s.ratings));
   const rating = s.ratings.find((r) => r.note === 'first');
@@ -149,6 +173,7 @@ async function auditRealApp() {
   await post('/api/ratings', { restaurant: { id: rating.restaurantId }, dish: 'burger', score: 8.1, note: 'second', photo: photo2 });
   await sleep(200);
   ok('replacing a photo removes the old file', !fs.existsSync(path.join(dir, 'photos', `${photo}.jpg`)) && fs.existsSync(path.join(dir, 'photos', `${photo2}.jpg`)));
+  ok('and its small copy', !fs.existsSync(path.join(dir, 'thumbs', `${photo}.jpg`)));
   await post('/api/ratings', { restaurant: { id: rating.restaurantId }, dish: 'burger', score: 8.2, note: 'third' });
   s = await matt.state();
   ok('editing without a photo keeps it', s.ratings.find((r) => r.id === rating.id).photo === photo2);
@@ -208,6 +233,18 @@ async function auditRealApp() {
   fs.rmdirSync(`${file}.tmp`);
   const retried = await post('/api/ratings', { restaurant: { name: 'Should Stick', area: '' }, dish: 'burger', score: 6 });
   ok('saving works again once the file is free (1)', retried.status === 200);
+
+  // newPhoto never made it onto a rating. Left-behind photos go once they are a day old.
+  const stale = path.join(dir, 'photos', '00000000-0000-4000-8000-00000000beef.jpg');
+  fs.writeFileSync(stale, jpeg);
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  fs.utimesSync(stale, twoDaysAgo, twoDaysAgo);
+  fs.utimesSync(path.join(dir, 'photos', `${keptPhoto}.jpg`), twoDaysAgo, twoDaysAgo);
+  await upload();
+  await sleep(200);
+  ok('an old photo no rating uses is removed', !fs.existsSync(stale));
+  ok('a recent upload is left alone', fs.existsSync(path.join(dir, 'photos', `${newPhoto}.jpg`)));
+  ok("an old photo on a rating is kept", fs.existsSync(path.join(dir, 'photos', `${keptPhoto}.jpg`)));
   await stop(server);
   ok('saving works again once the file is free', retried.status === 200 && JSON.parse(fs.readFileSync(file, 'utf8')).restaurants.some((r) => r.name === 'Should Stick') && !JSON.parse(fs.readFileSync(file, 'utf8')).restaurants.some((r) => r.name === 'Should Not Stick'));
 
@@ -261,7 +298,7 @@ async function auditRealApp() {
   ok('signing out ends the session', (await signIn.request('/api/state')).status === 401);
   const guesser = client(base);
   for (let i = 0; i < 5; i += 1) await guesser.send('/api/login', { name: 'Sam', password: 'wrong-password' });
-  ok('repeated wrong passwords lock the name', (await guesser.send('/api/login', { name: 'Sam', password: friend.password })).status === 429);
+  ok('repeated wrong passwords lock that visitor out', (await guesser.send('/api/login', { name: 'Sam', password: friend.password })).status === 429);
 
   const reset = client(base);
   await reset.send('/api/claim', { code: invite(file, 'Matt'), password: randomBytes(12).toString('hex') });
@@ -325,8 +362,13 @@ async function auditRealApp() {
   ok('invites can be made remotely', /Code: /.test(hostScript(['invite', 'Sam'])));
   const hostInvite = hostScript(['invite', 'Remote Pal']).match(/Code: (\S+)/)[1];
   const hostPerson = client(hostBase);
-  const claimedHost = await hostPerson.send('/api/claim', { code: hostInvite, password: randomBytes(12).toString('hex') });
+  const hostPassword = randomBytes(12).toString('hex');
+  const claimedHost = await hostPerson.send('/api/claim', { code: hostInvite, password: hostPassword });
   ok('a remote invite works', claimedHost.status === 200 && (await hostPerson.state()).me === 'Remote Pal');
+  const signInFrom = (ip, tried) => fetch(`${hostBase}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip }, body: JSON.stringify({ name: 'Remote Pal', password: tried }) });
+  for (let i = 0; i < 5; i += 1) await signInFrom('203.0.113.20', 'wrong-password');
+  ok('wrong passwords lock out the guesser', (await signInFrom('203.0.113.20', hostPassword)).status === 429);
+  ok("a guesser cannot lock the real person out", (await signInFrom('203.0.113.21', hostPassword)).status === 200);
   const forwarded = async (ip, code) => fetch(`${hostBase}/api/claim`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip }, body: JSON.stringify({ code, password: randomBytes(12).toString('hex') }) });
   for (let i = 0; i < 5; i += 1) await forwarded('203.0.113.1', 'BAD-CODE');
   ok('wrong codes lock out only that visitor', (await forwarded('203.0.113.1', 'BAD-CODE')).status === 429 && (await forwarded('203.0.113.2', 'BAD-CODE')).status === 400);

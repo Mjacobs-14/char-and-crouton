@@ -76,7 +76,31 @@ const removeIfUnused = (env, id) => env.DB.prepare(`DELETE FROM restaurants WHER
   AND NOT EXISTS (SELECT 1 FROM ratings WHERE restaurant_id = ?) AND NOT EXISTS (SELECT 1 FROM wishes WHERE restaurant_id = ?)`)
   .bind(id, id, id);
 
-const deletePhoto = (env, id) => env.PHOTOS.prepare('DELETE FROM photos WHERE id = ?').bind(id).run();
+const ORPHAN_MS = 24 * 60 * 60 * 1000;
+const DELETE_SIZE = 50;
+
+const deletePhotos = (env, ids) => {
+  const marks = ids.map(() => '?').join(', ');
+  return env.PHOTOS.batch(['photos', 'thumbs', 'uploads'].map(
+    (table) => env.PHOTOS.prepare(`DELETE FROM ${table} WHERE id IN (${marks})`).bind(...ids),
+  ));
+};
+
+const deletePhoto = (env, id) => deletePhotos(env, [id]);
+
+// A photo uploads before its rating is posted, so a closed tab or a lost race can leave one
+// behind. Anything a day old that no rating uses is removed.
+export async function removeOrphanPhotos(env) {
+  const [, stored] = await env.PHOTOS.batch([
+    env.PHOTOS.prepare('DELETE FROM uploads WHERE created < ?').bind(Date.now() - ORPHAN_MS),
+    env.PHOTOS.prepare('SELECT id FROM photos WHERE id NOT IN (SELECT id FROM uploads)'),
+  ]);
+  // Read second, so a photo attached to a rating in between is never missed.
+  const used = await env.DB.prepare('SELECT photo FROM ratings WHERE photo IS NOT NULL').all();
+  const inUse = new Set(used.results.map((row) => row.photo));
+  const orphans = stored.results.map((row) => row.id).filter((id) => !inUse.has(id));
+  for (let i = 0; i < orphans.length; i += DELETE_SIZE) await deletePhotos(env, orphans.slice(i, i + DELETE_SIZE));
+}
 
 // Each person has one rating per dish per restaurant, so rating again updates it.
 export async function saveRating(env, body, rater) {
@@ -101,7 +125,10 @@ export async function saveRating(env, body, rater) {
     statements.push(env.DB.prepare('UPDATE ratings SET score = ?, note = ?, photo = ?, updated_at = ? WHERE id = ?')
       .bind(score, note, photo || null, now, existing.id));
   } else {
-    statements.push(env.DB.prepare('INSERT INTO ratings (id, restaurant_id, dish, rater, score, note, photo, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    // If the same person's rating lands from another tab at this moment, this one updates it.
+    statements.push(env.DB.prepare(`INSERT INTO ratings (id, restaurant_id, dish, rater, score, note, photo, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (restaurant_id, dish, lower(rater)) DO UPDATE SET score = excluded.score, note = excluded.note,
+        photo = coalesce(excluded.photo, ratings.photo), updated_at = excluded.updated_at`)
       .bind(crypto.randomUUID(), restaurant.id, body.dish, rater, score, note, body.photo || null, now));
   }
   // Having eaten there, it's no longer on this person's want-to-try list.
@@ -125,13 +152,11 @@ export async function deleteRating(env, id, me) {
 export async function saveWish(env, body, person) {
   const restaurant = await resolveRestaurant(env, body.restaurant);
   const note = clean(body.note, 280);
-  const existing = await env.DB.prepare('SELECT id FROM wishes WHERE restaurant_id = ? AND person = ?').bind(restaurant.id, person).first();
   await env.DB.batch([
     ...restaurant.statements,
-    existing
-      ? env.DB.prepare('UPDATE wishes SET note = ? WHERE id = ?').bind(note, existing.id)
-      : env.DB.prepare('INSERT INTO wishes (id, restaurant_id, person, note, added_at) VALUES (?, ?, ?, ?, ?)')
-        .bind(crypto.randomUUID(), restaurant.id, person, note, new Date().toISOString()),
+    env.DB.prepare(`INSERT INTO wishes (id, restaurant_id, person, note, added_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (restaurant_id, person) DO UPDATE SET note = excluded.note`)
+      .bind(crypto.randomUUID(), restaurant.id, person, note, new Date().toISOString()),
   ]);
 }
 

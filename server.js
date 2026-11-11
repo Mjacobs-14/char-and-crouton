@@ -18,6 +18,13 @@ const PHOTO_DIR = path.join(path.dirname(DATA_FILE), 'photos');
 const FROZEN_FILE = path.join(path.dirname(DATA_FILE), 'FROZEN');
 const PHOTO_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
+// Small copies of photos for the board, made in the browser. They live apart from the photos
+// because any browser can make them again, so backups and moves don't need to carry them.
+const THUMB_DIR = path.join(path.dirname(DATA_FILE), 'thumbs');
+// They are about 10 KB; this just keeps anything else out.
+const MAX_THUMB_BYTES = 60_000;
+const THUMBS_PER_ASK = 20;
+const ORPHAN_MS = 24 * 60 * 60 * 1000;
 // Only needs the map, fonts and map library from elsewhere. Scripts can't run from anywhere else.
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -183,21 +190,66 @@ function photoPath(id) {
   return path.join(PHOTO_DIR, `${id}.jpg`);
 }
 
-function removePhoto(id) {
-  fs.rm(photoPath(id), { force: true }, (err) => {
-    if (err) console.error(`Could not remove photo ${id}: ${err.message}`);
-  });
+function thumbPath(id) {
+  return path.join(THUMB_DIR, `${id}.jpg`);
 }
 
-function savePhoto(bytes) {
+function removePhoto(id) {
+  for (const file of [photoPath(id), thumbPath(id)]) {
+    fs.rm(file, { force: true }, (err) => {
+      if (err) console.error(`Could not remove photo ${id}: ${err.message}`);
+    });
+  }
+}
+
+function assertJpeg(bytes) {
   // The browser shrinks photos to JPEG before uploading, so anything else isn't ours.
   if (bytes.length < 3 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
     throw new BadRequest('Photos must be JPEG images.');
   }
+}
+
+// A photo uploads before its rating is posted, so a closed tab can leave one behind.
+// Anything a day old that no rating uses is removed.
+function removeOrphanPhotos() {
+  const inUse = new Set(db.ratings.map((r) => r.photo));
+  const cutoff = Date.now() - ORPHAN_MS;
+  for (const file of fs.readdirSync(PHOTO_DIR)) {
+    const id = file.replace(/\.jpg$/, '');
+    if (!PHOTO_ID.test(id) || inUse.has(id)) continue;
+    if (fs.statSync(path.join(PHOTO_DIR, file)).mtimeMs < cutoff) removePhoto(id);
+  }
+}
+
+function savePhoto(bytes) {
+  assertJpeg(bytes);
   const id = randomUUID();
   fs.mkdirSync(PHOTO_DIR, { recursive: true });
   fs.writeFileSync(photoPath(id), bytes);
+  try {
+    removeOrphanPhotos();
+  } catch (err) {
+    // Tidying up can wait for the next upload.
+    console.error(`Could not clear unused photos: ${err.message}`);
+  }
   return id;
+}
+
+// The first small copy for a photo is kept; it never needs changing afterwards.
+function saveThumb(id, bytes) {
+  assertJpeg(bytes);
+  if (!PHOTO_ID.test(id) || !fs.existsSync(photoPath(id))) throw new BadRequest('Not found', 404);
+  if (fs.existsSync(thumbPath(id))) return;
+  fs.mkdirSync(THUMB_DIR, { recursive: true });
+  fs.writeFileSync(thumbPath(id), bytes);
+}
+
+// Photos from before small copies existed, for a browser to make them.
+function missingThumbs() {
+  return db.ratings
+    .filter((r) => r.photo && fs.existsSync(photoPath(r.photo)) && !fs.existsSync(thumbPath(r.photo)))
+    .slice(0, THUMBS_PER_ASK)
+    .map((r) => r.photo);
 }
 
 function removeRestaurantIfUnused(id) {
@@ -283,7 +335,7 @@ function readJson(req) {
   });
 }
 
-function readPhotoBody(req) {
+function readPhotoBody(req, maxBytes = MAX_PHOTO_BYTES) {
   return new Promise((resolve, reject) => {
     // Requiring this type makes other websites' requests fail a browser preflight check.
     if (req.headers['content-type'] !== 'image/jpeg') {
@@ -294,7 +346,7 @@ function readPhotoBody(req) {
     let size = 0;
     req.on('data', (chunk) => {
       size += chunk.length;
-      if (size > MAX_PHOTO_BYTES) {
+      if (size > maxBytes) {
         reject(new BadRequest('That photo is too large.'));
         req.destroy();
         return;
@@ -307,22 +359,32 @@ function readPhotoBody(req) {
 }
 
 function servePhoto(pathname, res) {
-  const id = pathname.slice('/photos/'.length).replace(/\.jpg$/, '');
+  const name = pathname.slice('/photos/'.length).replace(/\.jpg$/, '');
+  const wantsThumb = name.endsWith('.thumb');
+  const id = wantsThumb ? name.slice(0, -'.thumb'.length) : name;
   if (!PHOTO_ID.test(id)) {
     res.writeHead(404).end('Not found');
     return;
   }
-  fs.readFile(photoPath(id), (err, contents) => {
+  const send = (contents, cache) => {
+    res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': cache, 'X-Content-Type-Options': 'nosniff' });
+    res.end(contents);
+  };
+  const sendPhoto = () => fs.readFile(photoPath(id), (err, contents) => {
     if (err) {
       res.writeHead(404).end('Not found');
       return;
     }
-    res.writeHead(200, {
-      'Content-Type': 'image/jpeg',
-      'Cache-Control': 'private, max-age=31536000, immutable',
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.end(contents);
+    // Without a small copy yet, the full photo stands in, but only briefly so the small one takes over.
+    send(contents, wantsThumb ? 'private, max-age=3600' : 'private, max-age=31536000, immutable');
+  });
+  if (!wantsThumb) {
+    sendPhoto();
+    return;
+  }
+  fs.readFile(thumbPath(id), (err, contents) => {
+    if (err) sendPhoto();
+    else send(contents, 'private, max-age=31536000, immutable');
   });
 }
 
@@ -372,7 +434,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     // The app's files are public, but all of its data is behind sign-in.
-    const me = auth.currentPerson(req);
+    const me = auth.currentPerson(req, res);
     if (!me && (pathname.startsWith('/api/') || pathname.startsWith('/photos/'))) {
       sendJson(res, 401, { error: 'Please sign in.' });
       return;
@@ -412,6 +474,11 @@ const server = http.createServer(async (req, res) => {
       }
     } else if (pathname === '/api/photos' && req.method === 'POST') {
       sendJson(res, 200, { id: savePhoto(await readPhotoBody(req)) });
+    } else if (pathname === '/api/thumbs/missing' && req.method === 'GET') {
+      sendJson(res, 200, { ids: missingThumbs() });
+    } else if (pathname.startsWith('/api/thumbs/') && req.method === 'PUT') {
+      saveThumb(pathname.slice('/api/thumbs/'.length), await readPhotoBody(req, MAX_THUMB_BYTES));
+      sendJson(res, 200, { ok: true });
     } else if (pathname === '/api/wishes' && req.method === 'POST') {
       const body = await readJson(req);
       commit(() => { saveWish(body, me); });

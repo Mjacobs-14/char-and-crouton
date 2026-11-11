@@ -8,7 +8,12 @@ const INVITE_DAYS = 7;
 const MIN_PASSWORD = 8;
 const MAX_PASSWORD = 200;
 const MAX_FAILURES = 5;
+// Across every visitor, so guessing one person's password from many places is still limited.
+const MAX_NAME_FAILURES = 50;
 const LOCK_MS = 15 * 60 * 1000;
+const SESSION_MS = SESSION_DAYS * 24 * 60 * 60 * 1000;
+// Using the app keeps a sign-in going. Once a day is enough, and saves writing on every request.
+const RENEW_AFTER_MS = 24 * 60 * 60 * 1000;
 // No 0/O or 1/I/L, since these get read off a screen and typed on a phone.
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -64,9 +69,9 @@ export async function isFrozen(env) {
   return row ? row.value : null;
 }
 
-async function assertNotLocked(env, key) {
+async function assertNotLocked(env, key, max = MAX_FAILURES) {
   const row = await env.DB.prepare('SELECT count, until FROM failures WHERE key = ?').bind(key).first();
-  if (row && row.count >= MAX_FAILURES && Date.now() < row.until) {
+  if (row && row.count >= max && Date.now() < row.until) {
     throw new BadRequest('Too many tries. Please wait 15 minutes and try again.', 429);
   }
 }
@@ -83,12 +88,27 @@ async function noteFailure(env, key) {
 
 const clearFailures = (env, key) => env.DB.prepare('DELETE FROM failures WHERE key = ?').bind(key).run();
 
-export async function currentPerson(env, request) {
+// When the sign-in gets renewed, `renewed.cookie` is set for the response to carry.
+export async function currentPerson(env, request, renewed) {
   const token = readCookie(request, 'session');
   if (!token || !/^[0-9a-f]{64}$/.test(token)) return null;
-  const row = await env.DB.prepare('SELECT person FROM sessions WHERE token_hash = ? AND expires > ?')
-    .bind(await sha256(token), Date.now()).first();
-  return row ? row.person : null;
+  const now = Date.now();
+  const tokenHash = await sha256(token);
+  const row = await env.DB.prepare('SELECT person, expires FROM sessions WHERE token_hash = ? AND expires > ?')
+    .bind(tokenHash, now).first();
+  if (!row) return null;
+  if (renewed && row.expires - now < SESSION_MS - RENEW_AFTER_MS) {
+    try {
+      // Nothing is written while the app is paused.
+      const result = await env.DB.prepare(`UPDATE sessions SET expires = ? WHERE token_hash = ?
+        AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'frozen')`).bind(now + SESSION_MS, tokenHash).run();
+      if (result.meta.changes) renewed.cookie = sessionCookie(request, token, SESSION_MS / 1000);
+    } catch (err) {
+      // Renewing can wait for the next visit; it must never get in the way of this one.
+      console.error(`Could not renew a sign-in: ${err.message}`);
+    }
+  }
+  return row.person;
 }
 
 async function sessionStatements(env, person) {
@@ -99,7 +119,7 @@ async function sessionStatements(env, person) {
     statements: [
       env.DB.prepare('DELETE FROM sessions WHERE expires < ?').bind(now),
       env.DB.prepare('INSERT INTO sessions (token_hash, person, expires) VALUES (?, ?, ?)')
-        .bind(await sha256(token), person, now + SESSION_DAYS * 24 * 60 * 60 * 1000),
+        .bind(await sha256(token), person, now + SESSION_MS),
     ],
   };
 }
@@ -112,10 +132,13 @@ function validatePassword(password) {
 }
 
 // Returns the new session token.
-export async function login(env, body) {
+export async function login(env, request, body) {
   const name = typeof body.name === 'string' ? body.name.trim() : '';
-  const key = `login:${name.toLowerCase()}`;
+  // Locking by name alone would let anyone who knows a name keep that person out.
+  const nameKey = `login:${name.toLowerCase()}`;
+  const key = `${nameKey}:${clientAddress(request)}`;
   await assertNotLocked(env, key);
+  await assertNotLocked(env, nameKey, MAX_NAME_FAILURES);
   const account = await env.DB.prepare('SELECT person, password FROM accounts WHERE lower(person) = lower(?)').bind(name).first();
   if (account && !isPortable(account.password)) {
     throw new BadRequest('Since the move, your password needs setting again. Ask for a new invite code.');
@@ -124,6 +147,7 @@ export async function login(env, body) {
     && await passwordMatches(body.password, account.password);
   if (!matches) {
     await noteFailure(env, key);
+    await noteFailure(env, nameKey);
     throw new BadRequest("That name and password don't match. First time here? Use your invite code.");
   }
   await clearFailures(env, key);

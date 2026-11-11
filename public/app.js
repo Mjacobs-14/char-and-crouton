@@ -44,6 +44,9 @@ const state = {
   sort: 'top',
   me: '',
   frozen: null,
+  loaded: false, // false until the ratings have arrived, so an empty board isn't shown as the truth
+  offline: false, // the last try to reach the server failed
+  signedOut: false,
   open: new Set(),
 };
 let lastSnapshot = '';
@@ -52,7 +55,11 @@ async function api(path, options) {
   const res = await fetch(path, options);
   const body = await res.json().catch(() => ({}));
   if (res.status === 401) showAuth();
-  if (!res.ok) throw new Error(body.error || 'Could not reach the server.');
+  if (!res.ok) {
+    const error = new Error(body.error || 'Could not reach the server.');
+    error.status = res.status;
+    throw error;
+  }
   return body;
 }
 
@@ -63,16 +70,33 @@ function applyData(data) {
   state.wishes = data.wishes;
   state.restaurants = data.restaurants;
   state.ratings = data.ratings;
+  state.loaded = true;
+  state.offline = false;
+  state.signedOut = false;
   lastSnapshot = JSON.stringify(data);
   render();
+  fillMissingThumbs();
 }
 
+let refreshing = false;
+
 async function refresh() {
+  // Coming back to the app can ask twice at once; one answer is enough.
+  if (refreshing) return;
+  refreshing = true;
   try {
     const data = await api('/api/state');
-    if (JSON.stringify(data) !== lastSnapshot) applyData(data);
-  } catch {
-    // Keep showing what we have; the next refresh will try again.
+    if (JSON.stringify(data) !== lastSnapshot || state.offline) applyData(data);
+  } catch (err) {
+    // Keep showing what we have, and say so; the next refresh will try again.
+    const signedOut = err.status === 401;
+    if (state.signedOut !== signedOut || state.offline === signedOut) {
+      state.signedOut = signedOut;
+      state.offline = !signedOut;
+      render();
+    }
+  } finally {
+    refreshing = false;
   }
 }
 
@@ -193,7 +217,7 @@ function rowHtml(entry) {
       <button class="row-main" type="button" data-toggle="${restaurant.id}" aria-expanded="${isOpen}">
         <span class="rank">${rank}</span>
         ${photo
-    ? `<span class="place-with-thumb"><img class="row-thumb" src="/photos/${esc(photo.photo)}.jpg" alt="" loading="lazy"><span class="place">${place}</span></span>`
+    ? `<span class="place-with-thumb"><img class="row-thumb" src="/photos/${esc(photo.photo)}.thumb.jpg" alt="" loading="lazy"><span class="place">${place}</span></span>`
     : `<span class="place">${place}</span>`}
         <span class="score-cell">
           <span class="score" aria-label="${esc(scoreLabel)} ${fmt(avg)} out of 10">${fmt(avg)}</span>
@@ -223,6 +247,22 @@ function unratedHtml(restaurant) {
         ${restaurant.area ? `<span class="place-meta">${esc(locationLabel(restaurant))}</span>` : ''}
       </span>
       <button class="ghost" type="button" data-rate="${restaurant.id}" aria-label="Rate the ${esc(dish.one)} at ${esc(restaurant.name)}">Rate it</button>
+    </div>`;
+}
+
+// Shown until the ratings arrive. An empty board here would look like everything was lost.
+function waitingHtml() {
+  if (state.offline) {
+    return `
+      <div class="empty">
+        <h2>Can't reach the board</h2>
+        <p>Your ratings are safe. Check your connection, and this will keep trying.</p>
+        <button class="primary" type="button" data-retry>Try again</button>
+      </div>`;
+  }
+  return `
+    <div class="empty">
+      <h2>${state.signedOut ? 'Sign in to see the board' : 'Loading the board…'}</h2>
     </div>`;
 }
 
@@ -262,7 +302,9 @@ function renderMasthead(rated) {
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.setAttribute('aria-pressed', String(tab.dataset.dish === activeTab));
   });
-  if (onTry) {
+  if (!state.loaded) {
+    $('boardStat').textContent = state.offline ? "Can't reach the board right now." : state.signedOut ? '' : 'Loading…';
+  } else if (onTry) {
     const saved = wishGroups().length;
     $('boardStat').textContent = saved === 1 ? '1 place on the list.' : `${saved} places on the list.`;
   } else if (onMap) {
@@ -276,12 +318,15 @@ function renderMasthead(rated) {
   } else {
     $('boardStat').textContent = state.person || state.area ? `No ${dish.plural} rated with those filters.` : `No ${dish.plural} rated yet.`;
   }
+  // Until the server answers, nobody knows yet whether a sign-in is needed.
+  const checking = !state.me && !state.signedOut;
   $('whoButton').innerHTML = state.me
     ? `<span class="avatar" aria-hidden="true">${initials(state.me)}</span>${esc(state.me)}`
-    : 'Sign in';
-  $('whoButton').setAttribute('aria-label', state.me ? `Signed in as ${state.me}. Sign out` : 'Sign in');
+    : checking ? '…' : 'Sign in';
+  $('whoButton').setAttribute('aria-label', state.me ? `Signed in as ${state.me}. Sign out` : checking ? 'Checking who is signed in' : 'Sign in');
   $('frozenBanner').textContent = state.frozen || '';
   $('frozenBanner').hidden = !state.frozen;
+  $('offlineBanner').hidden = !(state.offline && state.loaded);
 }
 
 // Only rebuild the options when they change, so a background refresh can't close an open dropdown.
@@ -332,6 +377,10 @@ function render() {
   $('mapView').hidden = !onMap;
   if (onMap) {
     renderMap();
+    return;
+  }
+  if (!state.loaded) {
+    $('board').innerHTML = waitingHtml();
     return;
   }
   if (state.view === 'try') {
@@ -1023,18 +1072,43 @@ function syncExisting() {
 
 /* Photos: shrunk in the browser, so a phone's 8 MB picture uploads quickly over cell service. */
 const MAX_PHOTO_SIDE = 1600;
+// The board shows photos at 56 pixels, so it gets a small copy instead of the whole picture.
+const THUMB_SIDE = 224;
+const THUMBS_PER_VISIT = 5;
 
-async function shrinkPhoto(file) {
+async function shrinkPhoto(file, maxSide = MAX_PHOTO_SIDE, quality = 0.82) {
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  const scale = Math.min(1, MAX_PHOTO_SIDE / Math.max(bitmap.width, bitmap.height));
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);
   canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('empty'))), 'image/jpeg', 0.82);
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('empty'))), 'image/jpeg', quality);
   });
+}
+
+async function saveThumb(id, photo) {
+  const thumb = await shrinkPhoto(photo, THUMB_SIDE, 0.75);
+  await api(`/api/thumbs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: thumb });
+}
+
+// Photos from before small copies existed get theirs made by whichever browser sees them first.
+// A few per visit, so it never eats much of a phone's data.
+let thumbsChecked = false;
+async function fillMissingThumbs() {
+  if (thumbsChecked || state.frozen || !state.me) return;
+  thumbsChecked = true;
+  try {
+    const { ids } = await api('/api/thumbs/missing');
+    for (const id of ids.slice(0, THUMBS_PER_VISIT)) {
+      const res = await fetch(`/photos/${id}.jpg`);
+      if (res.ok) await saveThumb(id, await res.blob());
+    }
+  } catch {
+    // The board shows the full photo until its small copy exists.
+  }
 }
 
 let photoPreviewUrl = null;
@@ -1077,6 +1151,11 @@ async function choosePhoto(event) {
 
 async function uploadPhoto(blob) {
   const { id } = await api('/api/photos', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
+  try {
+    await saveThumb(id, blob);
+  } catch {
+    // The photo itself is saved; its small copy gets made on a later visit.
+  }
   return id;
 }
 
@@ -1564,7 +1643,9 @@ function handleBoardClick(event) {
   const target = event.target.closest('button');
   if (!target) return;
   const { toggle, rate, edit, new: newName } = target.dataset;
-  if (toggle) {
+  if ('retry' in target.dataset) {
+    refresh();
+  } else if (toggle) {
     if (state.open.has(toggle)) state.open.delete(toggle);
     else state.open.add(toggle);
     render();
@@ -1700,9 +1781,16 @@ document.querySelectorAll('[data-close]').forEach((button) => {
 });
 
 
-// Friends' new ratings show up without a reload.
-setInterval(refresh, 15000);
+// Friends' new ratings show up without a reload. Nothing is fetched while the app is in the
+// background, which saves battery and data; coming back to it checks straight away.
+setInterval(() => {
+  if (!document.hidden) refresh();
+}, 30000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refresh();
+});
 window.addEventListener('focus', refresh);
+window.addEventListener('online', refresh);
 
 // Browsers only allow this over https or on this computer, which is fine: the app works without it.
 if ('serviceWorker' in navigator && window.isSecureContext) {

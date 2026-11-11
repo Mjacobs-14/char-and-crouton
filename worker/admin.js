@@ -73,7 +73,10 @@ export async function handleAdmin(env, request, pathname, json) {
     if (request.method === 'PUT') {
       const bytes = new Uint8Array(await request.arrayBuffer());
       if (bytes.length > MAX_PHOTO_BYTES || bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new BadRequest('That photo is not a JPEG under 1.9 MB.');
-      await env.PHOTOS.prepare('INSERT OR REPLACE INTO photos (id, bytes) VALUES (?, ?)').bind(photo[1], bytes).run();
+      await env.PHOTOS.batch([
+        env.PHOTOS.prepare('INSERT OR REPLACE INTO photos (id, bytes) VALUES (?, ?)').bind(photo[1], bytes),
+        env.PHOTOS.prepare('INSERT OR REPLACE INTO uploads (id, created) VALUES (?, ?)').bind(photo[1], Date.now()),
+      ]);
       return json(200, { ok: true });
     }
   }

@@ -46,7 +46,7 @@ The critics' lists live in `public/lists.json`. To add or refresh one, edit that
 
 ## Your data
 
-Ratings are saved in `data/ratings.json` and photos in `data/photos`. Back up the `data` folder to back up everything.
+Ratings are saved in `data/ratings.json` and photos in `data/photos`. Back up the `data` folder to back up everything. `data/thumbs` holds small copies of the photos for the board, which the app remakes if they go missing.
 
 Restaurant suggestions come from [Photon](https://photon.komoot.io), a free search over OpenStreetMap, so what you type in the restaurant box is sent there. If it's unavailable, you can still add restaurants by hand. The Map tab uses OpenStreetMap's map images and looks up restaurant websites there, so it needs an internet connection.
 
@@ -85,7 +85,7 @@ One-time setup, run from this folder after creating a free Cloudflare account:
 
 The upload checks that Cloudflare's copy matches, and it refuses to run if Cloudflare already has data. Passwords set on the home version can't be checked on Cloudflare's free plan, so everyone claims a new invite on the new link (`node scripts/host.js invite Name`) and keeps their name and ratings.
 
-Afterwards, publish updates with `npx wrangler deploy`, and save a backup to your computer regularly with `node scripts/host.js pull`. Cloudflare also keeps 7 days of restore points. `node scripts/host.js freeze "message"` pauses changes, and `freeze off` resumes them.
+Afterwards, publish updates with `npx wrangler deploy`. When an update adds a file to `worker/migrations` or `worker/migrations-photos`, run the two commands from step 3 first; they only apply what's new. Save a backup to your computer regularly with `node scripts/host.js pull`. Cloudflare also keeps 7 days of restore points. `node scripts/host.js freeze "message"` pauses changes, and `freeze off` resumes them.
 
 `npm run check:worker` runs the Cloudflare version on this computer with a throwaway database and tests everything, without touching Cloudflare or your real data.
 

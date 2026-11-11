@@ -143,7 +143,9 @@ async function join(name) {
     ok('one invite claimed twice at once only works once', racers.map((r) => r.status).sort().join() === '200,400', racers.map((r) => r.status).join());
     const guess = (ip) => client().send('/api/login', { name: 'Sam', password: 'wrong-password' }, { 'CF-Connecting-IP': ip });
     for (let i = 0; i < 5; i += 1) await guess('203.0.113.1');
-    ok('repeated wrong passwords lock the name', (await client().send('/api/login', { name: 'Sam', password: sam.password })).status === 429);
+    const signInFrom = (ip) => client().send('/api/login', { name: 'Sam', password: sam.password }, { 'CF-Connecting-IP': ip });
+    ok('wrong passwords lock out the guesser', (await signInFrom('203.0.113.1')).status === 429);
+    ok('a guesser cannot lock the real person out', (await signInFrom('203.0.113.2')).status === 200);
     const badCode = (ip) => client().send('/api/claim', { code: 'NOPE-NOPE-NOPE', password: 'long-enough-1' }, { 'CF-Connecting-IP': ip });
     for (let i = 0; i < 5; i += 1) await badCode('203.0.113.7');
     ok('wrong invite codes lock out only that visitor', (await badCode('203.0.113.7')).status === 429 && (await badCode('203.0.113.8')).status === 400);
@@ -159,9 +161,25 @@ async function join(name) {
     const mine = s.ratings.find((r) => r.note === 'first');
     ok('a rating saves under your own name, whatever the request says', mine && mine.rater === 'Matt' && mine.score === 7.3);
     ok('its photo is served', (await matt.request(`/photos/${photo1}.jpg`)).status === 200);
+
+    // The board's small copies of photos.
+    const thumb = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9]);
+    const putThumb = (id, body = thumb) => matt.request(`/api/thumbs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body });
+    const getThumb = async (id) => Buffer.from(await (await matt.request(`/photos/${id}.thumb.jpg`)).arrayBuffer());
+    const missing = async () => (await (await matt.request('/api/thumbs/missing')).json()).ids;
+    ok('without a small copy, the full photo stands in', (await getThumb(photo1)).equals(jpeg));
+    ok('photos without a small copy are listed', (await missing()).includes(photo1));
+    ok('a small copy saves', (await putThumb(photo1)).status === 200);
+    ok('the small copy is served', (await getThumb(photo1)).equals(thumb));
+    ok('a photo with a small copy is no longer listed', !(await missing()).includes(photo1));
+    ok('a small copy needs its photo', (await putThumb('00000000-0000-4000-8000-00000000dead')).status === 404);
+    ok('a small copy must be a JPEG', (await putThumb(photo1, 'not a photo')).status === 400);
+    ok('small copies need signing in', (await fetch(`${base}/photos/${photo1}.thumb.jpg`)).status === 401);
+
     const photo2 = await upload(matt);
     await matt.send('/api/ratings', { restaurant: { id: mine.restaurantId }, dish: 'burger', score: 8.4, note: 'second', photo: photo2 });
     ok('replacing a photo removes the old one', (await matt.request(`/photos/${photo1}.jpg`)).status === 404);
+    ok('and its small copy', (await matt.request(`/photos/${photo1}.thumb.jpg`)).status === 404);
     await matt.send('/api/ratings', { restaurant: { id: mine.restaurantId }, dish: 'burger', score: 8.5, note: 'third' });
     s = await matt.state();
     const updated = s.ratings.filter((r) => r.restaurantId === mine.restaurantId);
@@ -177,6 +195,16 @@ async function join(name) {
     const wish = s.wishes.find((w) => w.note === 'try it');
     ok('want-to-try saves with its map pin', wish && s.restaurants.some((r) => r.placeId === 'osm:N123' && r.lat === 42));
     ok("you can't change someone else's list", (await matt.remove(`/api/wishes/${wish.id}`)).status === 403);
+    // Two tabs saving the same thing at the same moment must end up as one entry.
+    const twice = (url, body) => Promise.all([matt.send(url, body), matt.send(url, body)]);
+    const wishes = await twice('/api/wishes', { restaurant: { id: wish.restaurantId }, note: 'both tabs' });
+    s = await matt.state();
+    ok('the same want-to-try saved twice at once is kept once', wishes.every((r) => r.status === 200)
+      && s.wishes.filter((w) => w.restaurantId === wish.restaurantId && w.person === 'Matt').length === 1, wishes.map((r) => r.status).join());
+    const ratings = await twice('/api/ratings', { restaurant: { id: wish.restaurantId }, dish: 'burger', score: 6.5 });
+    s = await matt.state();
+    ok('the same rating saved twice at once is kept once', ratings.every((r) => r.status === 200)
+      && s.ratings.filter((r) => r.restaurantId === wish.restaurantId && r.rater === 'Matt').length === 1, ratings.map((r) => r.status).join());
     await pal.send('/api/ratings', { restaurant: { id: wish.restaurantId }, dish: 'caesar', score: 9 });
     ok('rating a place takes it off your list', !(await pal.state()).wishes.some((w) => w.id === wish.id));
     const edit = await matt.request(`/api/restaurants/${mine.restaurantId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Renamed Grill', area: 'Testville, MA' }) });
@@ -203,10 +231,24 @@ async function join(name) {
     ok('unfreezing allows changes again', (await matt.send('/api/ratings', { restaurant: { name: 'Thawed Grill', area: '' }, dish: 'burger', score: 6 })).status === 200);
     const beforeRestart = await matt.state();
     await stop(server);
+    await sleep(500);
+    // Pretend everyone signed in ten days ago, and that a photo was left behind long ago.
+    const DAY = 24 * 60 * 60 * 1000;
+    const stale = '00000000-0000-4000-8000-00000000beef';
+    const sql = (database, command) => wrangler(['d1', 'execute', database, '--local', '--persist-to', state, '--command', command]);
+    sql('char-and-crouton', `UPDATE sessions SET expires = ${Date.now() + 80 * DAY}`);
+    sql('char-and-crouton-photos', `INSERT INTO photos (id, bytes) VALUES ('${stale}', x'ffd8ffe0')`);
     server = start();
     await waitUp();
+    const renewed = await matt.request('/api/state');
+    ok('using the app renews the sign-in', /Max-Age=7776000/.test(renewed.headers.get('set-cookie') || ''));
+    ok('a sign-in renews at most once a day', !(await matt.request('/api/state')).headers.get('set-cookie'));
     const afterRestart = await matt.state();
     ok('everything and sign-ins survive a restart', JSON.stringify(afterRestart.ratings) === JSON.stringify(beforeRestart.ratings));
+    ok('the left-behind photo is there to begin with', (await matt.request(`/photos/${stale}.jpg`)).status === 200);
+    const fresh = await upload(matt);
+    ok('an old photo no rating uses is removed', (await matt.request(`/photos/${stale}.jpg`)).status === 404);
+    ok('a recent upload is left alone', (await matt.request(`/photos/${fresh}.jpg`)).status === 200 && (await matt.request(`/photos/${bigId}.jpg`)).status === 200);
     const pulled = host(['pull']).match(/to (.+)$/m)[1].trim();
     const backup = JSON.parse(fs.readFileSync(path.join(pulled, 'ratings.json'), 'utf8'));
     ok('an off-site backup matches', JSON.stringify(backup.ratings) === JSON.stringify(afterRestart.ratings)

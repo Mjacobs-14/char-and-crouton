@@ -27,6 +27,13 @@ The focus is deliberately narrow: only burgers and Caesar salads, for one group 
 - Stay within it: 10 ms of CPU per request, so password hashing uses PBKDF2 with `PASSWORD_ITERATIONS` from `wrangler.jsonc`. Lower it if sign-ins fail with error 1102.
 - Never add R2 or anything billed. Photos live in the `PHOTOS` D1 database, under 1.9 MB each.
 - Each data change runs as one `env.DB.batch`, which D1 applies all-or-nothing. Delete photos only after it succeeds.
+- A schema change is a new file in `worker/migrations` or `worker/migrations-photos`. Apply it to the live database before deploying the code that needs it.
+
+## Photos
+
+- The browser shrinks each photo, then makes a small copy for the board (`data/thumbs`, or the `thumbs` table in `PHOTOS`). `/photos/<id>.thumb.jpg` serves it, or the full photo until one exists.
+- Small copies can always be remade, so backups and the move to a host leave them out.
+- A photo uploads before its rating is saved. Each upload clears photos over a day old that no rating uses (the `uploads` table records when each arrived on Cloudflare).
 
 ## Rules
 
@@ -39,6 +46,8 @@ The focus is deliberately narrow: only burgers and Caesar salads, for one group 
 
 - A person's identity comes only from their session, never from a request body.
 - Responses use `view()`. Never send password hashes or sessions.
+- Sign-ins last 90 days from the last use, renewed at most once a day.
+- Wrong passwords lock out a name from one address (5 tries in 15 minutes), so a guesser can't lock the real person out. A name is only locked everywhere after 50.
 - `ADMIN_TOKEN` is the key to all data. It belongs only in the host's settings (a Wrangler secret on Cloudflare), and the admin routes don't exist without it.
 - Never ask for, print or commit a real password, invite code or admin token. Test with `DATA_FILE` and generated values.
 
