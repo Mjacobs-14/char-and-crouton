@@ -2,6 +2,26 @@
 
 Rate burgers and Caesar salads with your friends, on a 1.0 to 10.0 scale.
 
+<table>
+  <tr>
+    <td><img src="docs/screenshots/burgers.png" alt="The burger board: restaurants ranked by average grade, with each friend's score on the row" width="240"></td>
+    <td><img src="docs/screenshots/rating.png" alt="Rating a Caesar salad: a big 8.6 grade with plus and minus buttons, a slider and a note" width="240"></td>
+    <td><img src="docs/screenshots/map.png" alt="The map of Boston with each restaurant's burger and Caesar scores on its pin" width="240"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/burger-details.png" alt="A restaurant opened up to show each friend's grade, date and note" width="240"></td>
+    <td><img src="docs/screenshots/caesars.png" alt="The Caesar board in green, with places nobody has tried yet tucked away below" width="240"></td>
+    <td></td>
+  </tr>
+</table>
+
+- **Two boards, one argument:** burgers and Caesars ranked by everyone's average, with each person's grade on the row.
+- **Grades in tenths:** big plus and minus buttons for exact scores, starting blank so nobody's nudged toward a number.
+- **A shared map:** every restaurant pinned with its scores, plus a want-to-try list and the critics' picks.
+- **Private to your group:** invite-only accounts, and it runs free on Cloudflare or on your own computer.
+
+Screenshots use made-up people and restaurants from `scripts/demo-data.json`. To retake them, run `node scripts/screenshots.js`.
+
 ## Run it
 
 Double-click `start.bat`, or run `node server.js`. It needs [Node.js](https://nodejs.org) 18 or newer and nothing else.

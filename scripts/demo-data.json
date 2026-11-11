@@ -1,0 +1,23 @@
+{
+  "restaurants": [
+    { "id": "demo-1", "name": "Smash & Co.", "area": "Boston, MA", "placeId": "demo:1", "address": "12 Harbor Street", "lat": 42.3519, "lon": -71.0446 },
+    { "id": "demo-2", "name": "The Griddle Room", "area": "Boston, MA", "placeId": "demo:2", "address": "88 Elm Avenue", "lat": 42.3467, "lon": -71.0786 },
+    { "id": "demo-3", "name": "Copper Kettle Tavern", "area": "Boston, MA", "placeId": "demo:3", "address": "301 Dock Road", "lat": 42.3632, "lon": -71.0553 },
+    { "id": "demo-4", "name": "Little Leaf Bistro", "area": "Boston, MA", "placeId": "demo:4", "address": "5 Garden Lane", "lat": 42.3564, "lon": -71.0617 },
+    { "id": "demo-5", "name": "Patty Melt Social", "area": "Boston, MA", "placeId": "demo:5", "address": "240 Market Row", "lat": 42.3398, "lon": -71.0892 }
+  ],
+  "ratings": [
+    { "id": "r1", "restaurantId": "demo-1", "dish": "burger", "rater": "Alex", "score": 9.1, "note": "Lacy edges, perfect pickles.", "updatedAt": "2026-10-28T19:00:00.000Z" },
+    { "id": "r2", "restaurantId": "demo-1", "dish": "burger", "rater": "Sam", "score": 8.7, "note": "", "updatedAt": "2026-10-28T19:05:00.000Z" },
+    { "id": "r3", "restaurantId": "demo-2", "dish": "burger", "rater": "Alex", "score": 8.4, "note": "", "updatedAt": "2026-10-21T18:00:00.000Z" },
+    { "id": "r4", "restaurantId": "demo-2", "dish": "burger", "rater": "Sam", "score": 7.6, "note": "Bun fell apart.", "updatedAt": "2026-10-21T18:10:00.000Z" },
+    { "id": "r5", "restaurantId": "demo-3", "dish": "burger", "rater": "Sam", "score": 8.2, "note": "", "updatedAt": "2026-10-15T20:00:00.000Z" },
+    { "id": "r6", "restaurantId": "demo-3", "dish": "caesar", "rater": "Alex", "score": 8.9, "note": "Real anchovies.", "updatedAt": "2026-10-15T20:05:00.000Z" },
+    { "id": "r7", "restaurantId": "demo-4", "dish": "caesar", "rater": "Sam", "score": 9.3, "note": "Crunchy croutons, sharp parm.", "updatedAt": "2026-10-09T19:00:00.000Z" },
+    { "id": "r8", "restaurantId": "demo-4", "dish": "caesar", "rater": "Alex", "score": 8.8, "note": "", "updatedAt": "2026-10-09T19:05:00.000Z" },
+    { "id": "r9", "restaurantId": "demo-5", "dish": "burger", "rater": "Alex", "score": 7.4, "note": "", "updatedAt": "2026-10-02T18:30:00.000Z" }
+  ],
+  "people": ["Alex", "Sam"],
+  "wishes": [],
+  "accounts": []
+}
