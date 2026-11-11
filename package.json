@@ -9,9 +9,14 @@
     "invite": "node scripts/invite.js",
     "backup": "node scripts/backup.js",
     "freeze": "node scripts/freeze.js",
-    "host": "node scripts/host.js"
+    "host": "node scripts/host.js",
+    "check:worker": "node scripts/check-worker.js",
+    "worker:dev": "wrangler dev"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "wrangler": "4.154.0"
   }
 }

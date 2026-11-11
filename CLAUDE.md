@@ -11,12 +11,22 @@ The focus is deliberately narrow: only burgers and Caesar salads, for one group 
 - `public/lists.json`: published burger lists, entered by hand. Facts only (names, addresses, links), never review text. Lists don't give burger scores, so never present them as comparable numbers.
 - `lib/`: accounts and sessions (`auth.js`), invite codes (`invites.js`), backups (`backup.js`) and owner tools for a hosted copy (`admin.js`).
 - `public/sw.js`, `public/manifest.webmanifest`: make the app installable. The service worker must never store `/api/` or `/photos/`.
+- `lib/shared.js`: rules and place lookups used by both versions. Plain JavaScript and `fetch` only.
+- `worker/`, `wrangler.jsonc`: the Cloudflare version, with data in D1 (`DB` for everything, `PHOTOS` for photo bytes). Same API and response shapes as `server.js`, so `public/` and `scripts/host.js` work with either. Change one version, change both.
 - `scripts/check.js`: checks the real data read-only, then tests saving on a throwaway copy.
+- `scripts/check-worker.js`: runs the Cloudflare version locally on a throwaway D1 database and tests it end to end.
 
 ## Commands
 
 - `npm start` runs the app on port 4173. `PORT` and `DATA_FILE` override the defaults.
-- `npm run check` must pass before a change is finished. The running app needs a restart to pick up `server.js` changes.
+- `npm run check` and `npm run check:worker` must both pass before a change is finished. The running app needs a restart to pick up `server.js` changes.
+- `npm` scripts are blocked in this computer's PowerShell, so the user runs `node scripts/<name>.js` instead.
+
+## Cloudflare free plan
+
+- Stay within it: 10 ms of CPU per request, so password hashing uses PBKDF2 with `PASSWORD_ITERATIONS` from `wrangler.jsonc`. Lower it if sign-ins fail with error 1102.
+- Never add R2 or anything billed. Photos live in the `PHOTOS` D1 database, under 1.9 MB each.
+- Each data change runs as one `env.DB.batch`, which D1 applies all-or-nothing. Delete photos only after it succeeds.
 
 ## Rules
 
@@ -27,9 +37,9 @@ The focus is deliberately narrow: only burgers and Caesar salads, for one group 
 
 ## Accounts
 
-- A person's identity comes only from their session in `server.js`, never from a request body.
-- Responses use `view()`. Never send `db` itself, since it holds password hashes and sessions.
-- `ADMIN_TOKEN` is the key to all data. It belongs only in the host's settings, and the admin routes don't exist without it.
+- A person's identity comes only from their session, never from a request body.
+- Responses use `view()`. Never send password hashes or sessions.
+- `ADMIN_TOKEN` is the key to all data. It belongs only in the host's settings (a Wrangler secret on Cloudflare), and the admin routes don't exist without it.
 - Never ask for, print or commit a real password, invite code or admin token. Test with `DATA_FILE` and generated values.
 
 ## Outside services
@@ -40,4 +50,4 @@ The focus is deliberately narrow: only burgers and Caesar salads, for one group 
 
 ## Plan
 
-Add the remaining features first, then put the app online with accounts and a real database, moving photos to online storage.
+Move to Cloudflare's free plan using the steps in the README, then keep the home version working as a fallback.

@@ -7,6 +7,9 @@ const { randomUUID } = require('node:crypto');
 const createAuth = require('./lib/auth');
 const { automaticBackup } = require('./lib/backup');
 const createAdmin = require('./lib/admin');
+const {
+  DISHES, BadRequest, clean, isValidScore, placeDetails, groupCenter, searchPlaces, searchNearby, fetchWebsite,
+} = require('./lib/shared');
 
 const PORT = Number(process.env.PORT) || 4173;
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'ratings.json');
@@ -15,8 +18,6 @@ const PHOTO_DIR = path.join(path.dirname(DATA_FILE), 'photos');
 const FROZEN_FILE = path.join(path.dirname(DATA_FILE), 'FROZEN');
 const PHOTO_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
-const PHOTON_HEADERS = { 'User-Agent': 'CharAndCrouton/1.0' };
-const DISHES = ['burger', 'caesar'];
 // Only needs the map, fonts and map library from elsewhere. Scripts can't run from anywhere else.
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -32,19 +33,6 @@ const CONTENT_SECURITY_POLICY = [
   "form-action 'self'",
   "frame-ancestors 'none'",
 ].join('; ');
-const PLACES_URL = 'https://photon.komoot.io/api/';
-const PLACES_REVERSE_URL = 'https://photon.komoot.io/reverse';
-const PLACE_TAGS = ['restaurant', 'fast_food', 'pub', 'bar', 'cafe', 'food_court', 'biergarten'];
-const US_STATES = {
-  Alabama: 'AL', Alaska: 'AK', Arizona: 'AZ', Arkansas: 'AR', California: 'CA', Colorado: 'CO', Connecticut: 'CT',
-  Delaware: 'DE', 'District of Columbia': 'DC', Florida: 'FL', Georgia: 'GA', Hawaii: 'HI', Idaho: 'ID', Illinois: 'IL',
-  Indiana: 'IN', Iowa: 'IA', Kansas: 'KS', Kentucky: 'KY', Louisiana: 'LA', Maine: 'ME', Maryland: 'MD',
-  Massachusetts: 'MA', Michigan: 'MI', Minnesota: 'MN', Mississippi: 'MS', Missouri: 'MO', Montana: 'MT', Nebraska: 'NE',
-  Nevada: 'NV', 'New Hampshire': 'NH', 'New Jersey': 'NJ', 'New Mexico': 'NM', 'New York': 'NY', 'North Carolina': 'NC',
-  'North Dakota': 'ND', Ohio: 'OH', Oklahoma: 'OK', Oregon: 'OR', Pennsylvania: 'PA', 'Rhode Island': 'RI',
-  'South Carolina': 'SC', 'South Dakota': 'SD', Tennessee: 'TN', Texas: 'TX', Utah: 'UT', Vermont: 'VT', Virginia: 'VA',
-  Washington: 'WA', 'West Virginia': 'WV', Wisconsin: 'WI', Wyoming: 'WY',
-};
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -101,10 +89,7 @@ function commit(change) {
   if (afterSave) afterSave();
 }
 
-const clean = (value, max) => (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, max) : '');
 const same = (a, b) => a.toLowerCase() === b.toLowerCase();
-
-class BadRequest extends Error {}
 
 const admin = createAdmin({ db, commit, dataFile: DATA_FILE, photoDir: PHOTO_DIR, sendJson });
 const auth = createAuth({ db, commit, dataFile: DATA_FILE, BadRequest, isFrozen: () => Boolean(frozenMessage()) });
@@ -121,20 +106,6 @@ function frozenMessage() {
 function view(person) {
   const { restaurants, ratings, people, wishes } = db;
   return { restaurants, ratings, people, wishes, me: person, frozen: frozenMessage() };
-}
-
-function isValidScore(score) {
-  if (typeof score !== 'number' || score < 1 || score > 10) return false;
-  return Math.abs(score * 10 - Math.round(score * 10)) < 1e-9;
-}
-
-function placeDetails(input) {
-  const placeId = clean(input.placeId, 40);
-  if (!placeId) return {};
-  const lat = Number(input.lat);
-  const lon = Number(input.lon);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new BadRequest('That place has no location.');
-  return { placeId, address: clean(input.address, 120), lat, lon };
 }
 
 function findOrCreateRestaurant(input) {
@@ -160,116 +131,12 @@ function findOrCreateRestaurant(input) {
   return created;
 }
 
-const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
-
-function coordsFrom(params) {
-  const lat = Number(params.get('lat'));
-  const lon = Number(params.get('lon'));
-  return params.has('lat') && params.has('lon') && Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
-}
-
-// Without a location, results are worldwide. Use where the person is right now
-// if the browser shared it, otherwise where this group's restaurants are.
-function searchCenter(params) {
-  const here = coordsFrom(params);
-  if (here) return here;
-  const located = db.restaurants.filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon));
-  return located.length ? { lat: median(located.map((r) => r.lat)), lon: median(located.map((r) => r.lon)) } : null;
-}
-
-function metersBetween(a, b) {
-  const rad = (degrees) => (degrees * Math.PI) / 180;
-  const dLat = rad(b.lat - a.lat);
-  const dLon = rad(b.lon - a.lon);
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
-  return 6371000 * 2 * Math.asin(Math.sqrt(h));
-}
-
-async function searchNearby(params) {
-  const here = coordsFrom(params);
-  if (!here) throw new BadRequest('Nearby search needs a location.');
-  const url = new URL(PLACES_REVERSE_URL);
-  url.searchParams.set('lat', here.lat);
-  url.searchParams.set('lon', here.lon);
-  url.searchParams.set('limit', '8');
-  url.searchParams.set('radius', '1');
-  for (const tag of PLACE_TAGS) url.searchParams.append('osm_tag', `amenity:${tag}`);
-  const response = await fetch(url, { headers: PHOTON_HEADERS, signal: AbortSignal.timeout(4000) });
-  if (!response.ok) throw new Error(`Place search returned ${response.status}`);
-  const { features } = await response.json();
-  return features
-    .filter((f) => f.properties.name)
-    .map(toPlace)
-    .map((place) => ({ ...place, meters: Math.round(metersBetween(here, place)) }))
-    .sort((a, b) => a.meters - b.meters);
-}
-
-function toPlace(feature) {
-  const p = feature.properties;
-  const address = [p.housenumber, p.street].filter(Boolean).join(' ');
-  // OpenStreetMap mixes "IL" and "Illinois"; one spelling keeps the location filter tidy.
-  const state = p.countrycode === 'US' ? US_STATES[p.state] || p.state : p.state;
-  return {
-    placeId: `osm:${p.osm_type}${p.osm_id}`,
-    name: p.name || address,
-    isVenue: p.osm_key === 'amenity',
-    address,
-    area: [p.city || p.town || p.district || p.county || p.name, state].filter(Boolean).join(', '),
-    lat: feature.geometry.coordinates[1],
-    lon: feature.geometry.coordinates[0],
-  };
-}
-
-async function searchPlaces(params) {
-  const query = clean(params.get('q'), 80);
-  if (query.length < 2) return [];
-  const url = new URL(PLACES_URL);
-  url.searchParams.set('q', query);
-  url.searchParams.set('limit', '6');
-  // Addresses are allowed when pinning a restaurant OpenStreetMap doesn't list.
-  if (params.get('addresses') !== '1') {
-    for (const tag of PLACE_TAGS) url.searchParams.append('osm_tag', `amenity:${tag}`);
-  }
-  const center = searchCenter(params);
-  if (center) {
-    url.searchParams.set('lat', center.lat);
-    url.searchParams.set('lon', center.lon);
-  }
-  const response = await fetch(url, {
-    headers: { 'User-Agent': 'CharAndCrouton/1.0' },
-    signal: AbortSignal.timeout(4000),
-  });
-  if (!response.ok) throw new Error(`Place search returned ${response.status}`);
-  const { features } = await response.json();
-  return features.filter((f) => f.properties.name || f.properties.street).map(toPlace);
-}
-
-function normalizeWebsite(raw) {
-  if (!raw) return '';
-  const first = raw.split(';')[0].trim();
-  try {
-    const url = new URL(/^https?:\/\//i.test(first) ? first : `https://${first}`);
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href.slice(0, 300) : '';
-  } catch {
-    return '';
-  }
-}
-
 // Fetched the first time someone opens a restaurant on the map, then remembered.
 async function findWebsite(restaurant) {
   if (restaurant.website !== undefined) return restaurant.website;
   if (frozenMessage()) return '';
-  const match = /^osm:([NWR])(\d+)$/.exec(restaurant.placeId || '');
-  if (!match) return '';
-  const type = { N: 'node', W: 'way', R: 'relation' }[match[1]];
-  const response = await fetch(`https://api.openstreetmap.org/api/0.6/${type}/${match[2]}.json`, {
-    headers: { 'User-Agent': 'CharAndCrouton/1.0' },
-    signal: AbortSignal.timeout(4000),
-  });
-  if (!response.ok) throw new Error(`OpenStreetMap returned ${response.status}`);
-  const { elements } = await response.json();
-  const tags = (elements[0] && elements[0].tags) || {};
-  const website = normalizeWebsite(tags.website || tags['contact:website'] || tags.url);
+  if (!restaurant.placeId) return '';
+  const website = await fetchWebsite(restaurant.placeId);
   commit(() => { db.restaurants.find((r) => r.id === restaurant.id).website = website; });
   return website;
 }
@@ -518,7 +385,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, view(me));
     } else if (pathname === '/api/places' && req.method === 'GET') {
       try {
-        sendJson(res, 200, await searchPlaces(searchParams));
+        sendJson(res, 200, await searchPlaces(searchParams, groupCenter(db.restaurants)));
       } catch (err) {
         console.error(`Place search failed: ${err.message}`);
         sendJson(res, 502, { error: 'Restaurant search is unavailable right now.' });

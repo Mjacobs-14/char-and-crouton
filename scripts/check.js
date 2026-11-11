@@ -315,7 +315,7 @@ async function auditRealApp() {
   ok('wrong admin token is refused', (await fetch(`${hostBase}/api/admin/export`, { headers: { Authorization: 'Bearer wrong' } })).status === 401);
   ok('upload is verified', /Uploaded and verified/.test(hostScript(['push'])));
   const exported = await (await fetch(`${hostBase}/api/admin/export`, { headers: { Authorization: `Bearer ${token}` } })).json();
-  ok('everything arrives, including accounts and photos', JSON.stringify(exported.data.ratings) === JSON.stringify(homeFile.ratings) && exported.data.accounts.length === 1 && exported.photos[movedPhoto] === jpeg.toString('base64'));
+  ok('everything arrives, including accounts and photos', JSON.stringify(exported.data.ratings) === JSON.stringify(homeFile.ratings) && exported.data.accounts.length === 1 && exported.photoIds.includes(movedPhoto));
   ok('old sign-ins do not move', !('sessions' in exported.data) && JSON.parse(fs.readFileSync(hostFile, 'utf8')).sessions.length === 0);
   let refused = false;
   try { hostScript(['push']); } catch (err) { refused = /already has data/.test(err.stderr); }

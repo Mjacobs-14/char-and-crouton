@@ -34,19 +34,28 @@ Restaurant suggestions come from [Photon](https://photon.komoot.io), a free sear
 
 The app makes a dated copy of your ratings and photos in `data/backups` once a day, keeping the last 14. Run `npm run backup` for one that's kept until you delete it. To restore, stop the app and copy a backup's `ratings.json` and `photos` back into `data`.
 
-## Going online
+## Going online (Cloudflare)
 
-The app can run on any host with permanent storage. On Railway:
+The `worker/` folder is a version of the app for Cloudflare's free plan, with data in Cloudflare's D1 databases instead of a file. It uses the same page, the same sign-in rules and the same owner tools. Stay on the free plan and don't add R2 storage, so nothing can be billed.
 
-1. Create a project from this GitHub repository, and generate a public domain under **Settings > Networking**.
-2. Add a volume to the service, mounted at `/data`.
-3. Run `node scripts/host.js token` on your computer, and keep the result somewhere private.
-4. Set these variables on the service:
-   - `DATA_FILE` = `/data/ratings.json`
-   - `TRUST_PROXY` = `1`
-   - `AUTO_BACKUP_PHOTOS` = `0`
-   - `ADMIN_TOKEN` = the token from step 3
-5. Freeze and back up your computer's copy, then upload it to the empty host:
+One-time setup, run from this folder after creating a free Cloudflare account:
+
+1. Sign in: `npx wrangler login`
+2. Create the two databases, and copy each printed `database_id` into `wrangler.jsonc`:
+
+   ```
+   npx wrangler d1 create char-and-crouton
+   npx wrangler d1 create char-and-crouton-photos
+   ```
+3. Create the tables:
+
+   ```
+   npx wrangler d1 migrations apply char-and-crouton --remote
+   npx wrangler d1 migrations apply char-and-crouton-photos --remote
+   ```
+4. Make an admin token with `node scripts/host.js token`, then store it on Cloudflare with `npx wrangler secret put ADMIN_TOKEN` and paste it when asked. Keep a copy somewhere private.
+5. Publish it with `npx wrangler deploy`. It prints the app's `workers.dev` link.
+6. Freeze and back up your computer's copy, then upload it:
 
    ```
    node scripts/freeze.js "We've moved: https://your-link"
@@ -54,9 +63,11 @@ The app can run on any host with permanent storage. On Railway:
    node scripts/host.js push
    ```
 
-The upload checks that the host's copy matches, and it refuses to run if the host already has data. Everyone signs in again at the new link with their existing password.
+The upload checks that Cloudflare's copy matches, and it refuses to run if Cloudflare already has data. Passwords set on the home version can't be checked on Cloudflare's free plan, so everyone claims a new invite on the new link (`node scripts/host.js invite Name`) and keeps their name and ratings.
 
-On the host, invite people with `node scripts/host.js invite Name`, and save a backup to your computer with `node scripts/host.js pull`. Run the pull regularly, since the host's own automatic backups live on the same disk.
+Afterwards, publish updates with `npx wrangler deploy`, and save a backup to your computer regularly with `node scripts/host.js pull`. Cloudflare also keeps 7 days of restore points. `node scripts/host.js freeze "message"` pauses changes, and `freeze off` resumes them.
+
+`npm run check:worker` runs the Cloudflare version on this computer with a throwaway database and tests everything, without touching Cloudflare or your real data.
 
 On iPhone, install it from Safari with **Share > Add to Home Screen**. On Android, use **Install app** or **Add to Home screen** in Chrome's menu.
 

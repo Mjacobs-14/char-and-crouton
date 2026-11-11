@@ -1,0 +1,36 @@
+// Cloudflare settings for the hosted version. The home version (server.js) doesn't use this.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "char-and-crouton",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-01",
+  // One public link only: no extra per-version preview links.
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // The app's data is only ever answered by the worker, never as a file.
+    "run_worker_first": ["/api/*", "/photos/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "char-and-crouton",
+      "database_id": "88ab18e3-1868-44a9-b532-cd78db79cc2a",
+      "migrations_dir": "worker/migrations"
+    },
+    {
+      // Photos get their own database so they can't crowd out the ratings.
+      "binding": "PHOTOS",
+      "database_name": "char-and-crouton-photos",
+      "database_id": "bc42e163-9e9b-4272-ab50-2aa9a69b9c21",
+      "migrations_dir": "worker/migrations-photos"
+    }
+  ],
+  "vars": {
+    // Higher is safer if the database ever leaked, but each sign-in must stay within the free plan's time limit.
+    "PASSWORD_ITERATIONS": "100000"
+  },
+  "observability": { "enabled": true }
+}
