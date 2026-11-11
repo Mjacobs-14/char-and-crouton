@@ -7,7 +7,7 @@ import {
   PHOTO_ID, deleteRating, deleteWish, everything, removeOrphanPhotos, saveRating, saveWish, toRestaurant, updateRestaurant,
 } from './data.js';
 
-const { BadRequest, exploreArea, fetchWebsite, groupCenter, searchNearby, searchPlaces } = shared;
+const { BadRequest, exploreArea, fetchWebsite, groupCenter, searchAreas, searchNearby, searchPlaces } = shared;
 const SESSION_SECONDS = 90 * 24 * 60 * 60;
 // Leaves room under D1's 2 MB per row. Photos are shrunk well below this in the browser.
 const MAX_PHOTO_BYTES = 1_900_000;
@@ -150,13 +150,14 @@ async function route(request, env, renewed) {
 
   if (pathname.startsWith('/photos/') && method === 'GET') return servePhoto(env, pathname);
   if (pathname === '/api/state' && method === 'GET') return json(200, await view(env, me));
-  if (pathname === '/api/places' && method === 'GET') {
+  if ((pathname === '/api/places' || pathname === '/api/areas') && method === 'GET') {
     const restaurants = (await env.DB.prepare('SELECT * FROM restaurants').all()).results.map(toRestaurant);
+    const cities = pathname === '/api/areas';
     try {
-      return json(200, await searchPlaces(searchParams, groupCenter(restaurants)));
+      return json(200, await (cities ? searchAreas : searchPlaces)(searchParams, groupCenter(restaurants)));
     } catch (err) {
-      console.error(`Place search failed: ${err.message}`);
-      return json(502, { error: 'Restaurant search is unavailable right now.' });
+      console.error(`${cities ? 'City' : 'Place'} search failed: ${err.message}`);
+      return json(502, { error: `${cities ? 'City' : 'Restaurant'} search is unavailable right now.` });
     }
   }
   if (pathname === '/api/nearby' && method === 'GET') {

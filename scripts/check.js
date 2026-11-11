@@ -106,9 +106,113 @@ async function auditRealApp() {
   }
 }
 
+// Restaurant search, with made-up answers standing in for the outside service.
+async function checkSearch() {
+  console.log('--- Restaurant search ---');
+  const { searchPlaces, searchAreas } = require('../lib/shared.js');
+  const boston = { lat: 42.355, lon: -71.06 };
+  let id = 0;
+  const place = (name, city, lat, lon, extra = {}) => {
+    id += 1;
+    return {
+      geometry: { coordinates: [lon, lat] },
+      properties: { osm_type: 'N', osm_id: id, osm_key: 'amenity', osm_value: 'restaurant', name, city, state: 'Massachusetts', countrycode: 'US', ...extra },
+    };
+  };
+  const realFetch = global.fetch;
+  let asked = [];
+  let answer = () => [];
+  global.fetch = async (url) => {
+    asked.push(new URL(url));
+    const features = await answer(new URL(url), asked.length);
+    return { ok: true, status: 200, json: async () => ({ features }) };
+  };
+  const search = (q, extra = {}) => searchPlaces(new URLSearchParams({ q, ...extra }), boston);
+  try {
+    answer = (url, n) => {
+      if (n === 1) throw new Error('timed out');
+      return [place('Retry Grill', 'Boston', 42.36, -71.06)];
+    };
+    const retried = await search('retry grill');
+    ok('a failed lookup is tried again', retried.length === 1 && asked.length === 2);
+    await search('retry grill');
+    ok('a repeated search is answered from memory', asked.length === 2);
+    ok('breweries and hotels are searched too', asked[0].searchParams.getAll('osm_tag').includes('craft:brewery')
+      && asked[0].searchParams.getAll('osm_tag').includes('amenity:restaurant'));
+
+    asked = [];
+    answer = (url) => (url.searchParams.has('lat')
+      ? [place('Red Robin', 'Foxborough', 42.09, -71.26), place('Red Robin', 'Plymouth', 41.95, -70.71)]
+      : [place('Red Robin', 'Chicago', 41.88, -87.63, { state: 'Illinois' })]);
+    const away = await search('red robin chicago');
+    ok('a name with another city finds the place there', asked.length === 2 && away[0].area === 'Chicago, IL', away.map((p) => p.area).join(' | '));
+    asked = [];
+    await search('red robin fox');
+    ok('nearby matches need no second lookup', asked.length === 1);
+
+    answer = () => [
+      ...[1, 2, 3, 4, 5].map((n) => place('Burger King', 'Boston', 42.355 + n * 0.002, -71.06)),
+      place('Burger 373', 'Boston', 42.38, -71.06),
+      place('Burger 373', 'Boston', 42.38005, -71.06, { osm_type: 'W' }),
+    ];
+    const chain = await search('burger');
+    ok("a chain's branches don't crowd out other places", chain.findIndex((p) => p.name === 'Burger 373') === 3 && chain.length === 6, chain.map((p) => p.name).join(' | '));
+
+    answer = () => [place("Mother's Tavern", 'Boston', 42.36, -71.05), place('Other Tavern', 'Boston', 42.356, -71.06)];
+    ok('punctuation in a name does not matter', (await search('mothers tavern'))[0].name === "Mother's Tavern");
+
+    answer = () => [
+      place('Trillium', 'Laconia', 43.53, -71.47, { state: 'New Hampshire' }),
+      place('Trillium Brewing', 'Boston', 42.35, -71.05, { osm_key: 'craft', osm_value: 'brewery' }),
+    ];
+    const near = await search('trillium');
+    ok('places around here come first', near[0].name === 'Trillium Brewing' && near[0].isVenue === true);
+
+    answer = (url) => (url.searchParams.has('lat')
+      ? [place('Tasty Burger', 'Boston', 42.35, -71.08), place('Burger King', 'Boston', 42.356, -71.06)]
+      : [place('Tastien Burger', 'Beijing', 39.9, 116.4, { state: '', countrycode: 'CN' })]);
+    const typo = await search('tasti burger');
+    ok('a one-letter typo still finds the nearby place', typo[0].name === 'Tasty Burger' && !typo.some((p) => p.name === 'Burger King'), typo.map((p) => p.name).join(' | '));
+
+    answer = () => [
+      place("Mother's Pizza", 'Melrose', 42.45, -71.06),
+      ...[1, 2, 3, 4, 5, 6].map((n) => place("Mother's", `Faraway ${n}`, 18 + n, -77, { state: '', countrycode: 'JM' })),
+    ];
+    const trimmed = await search('mother');
+    ok('far-off namesakes are kept to a few', trimmed.length === 4 && trimmed[0].name === "Mother's Pizza", `${trimmed.length} results`);
+
+    answer = () => [place('Far Grill', 'Boston', 42.364, -71.06)];
+    const unmeasured = await search('far grill');
+    const measured = await search('far grill', { lat: '42.355', lon: '-71.06' });
+    ok('distances come only from a spot the person chose', unmeasured[0].meters === undefined && Math.abs(measured[0].meters - 1000) < 20, `${measured[0].meters} m`);
+
+    asked = [];
+    const city = (name, state, lat, lon, extra = {}) => ({ geometry: { coordinates: [lon, lat] }, properties: { name, state, countrycode: 'US', country: 'United States', ...extra } });
+    answer = () => [
+      city('Portland', 'Maine', 43.66, -70.26), city('Portland', 'Oregon', 45.52, -122.68), city('Portland', 'Maine', 43.66, -70.26),
+      city('Brooklyn', 'New York', 40.65, -73.95, { city: 'New York' }), city('Portland', 'Victoria', -38.34, 141.6, { countrycode: 'AU', country: 'Australia' }),
+    ];
+    const cities = await searchAreas(new URLSearchParams({ q: 'portland' }), boston);
+    ok('cities are named clearly and listed once', cities.map((c) => c.name).join(' | ') === 'Portland, ME | Portland, OR | Brooklyn, New York, NY | Portland, Victoria, Australia'
+      && cities[0].lat === 43.66, cities.map((c) => c.name).join(' | '));
+    ok('a city search only looks for cities and neighborhoods', asked[0].searchParams.getAll('layer').join() === 'city,district' && !asked[0].searchParams.has('osm_tag'));
+
+    answer = () => { throw new Error('down'); };
+    let failed = false;
+    try { await search('nothing works'); } catch { failed = true; }
+    ok('a search that keeps failing says so', failed);
+
+    answer = () => [place('', 'Boston', 42.36, -71.06, { osm_key: 'building', street: 'Main Street', housenumber: '12' })];
+    ok('street addresses only appear when pinning', (await search('12 main street')).length === 0 && (await search('12 main street', { addresses: '1' })).length === 1);
+  } finally {
+    global.fetch = realFetch;
+  }
+}
+
 (async () => {
   const strip = (d) => JSON.stringify({ restaurants: d.restaurants, ratings: d.ratings });
   await auditRealApp();
+  await checkSearch();
 
   console.log('--- Copy: saving through restarts ---');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'burger-verify-'));
@@ -255,7 +359,7 @@ async function auditRealApp() {
   const stranger = client(base);
   ok('signed-out visitors get no data', (await stranger.request('/api/state')).status === 401);
   ok('signed-out visitors cannot post', (await stranger.send('/api/ratings', { restaurant: { name: 'Nope' }, dish: 'burger', score: 5 })).status === 401);
-  ok('signed-out visitors cannot search', (await stranger.request('/api/places?q=burger')).status === 401);
+  ok('signed-out visitors cannot search', (await stranger.request('/api/places?q=burger')).status === 401 && (await stranger.request('/api/areas?q=boston')).status === 401);
   ok('signed-out visitors cannot explore', (await stranger.request('/api/explore?lat=42.35&lon=-71.05')).status === 401);
 
   const inviteCode = invite(file, 'Matt');

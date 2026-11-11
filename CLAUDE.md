@@ -54,6 +54,8 @@ The focus is deliberately narrow: only burgers and Caesar salads, for one group 
 ## Outside services
 
 - Photon (OpenStreetMap) provides restaurant search and nearby places. What people type in the restaurant box is sent there.
+- The restaurant box searches around the group's restaurants unless the person picks "near me" or a city (`/api/areas`). Distances show only for "near me".
+- Photon is free and shared: each lookup is retried once and remembered for ten minutes, and at most two run at once. Search ranking (`rankPlaces` in `lib/shared.js`) is ours, so test it with made-up answers as `scripts/check.js` does.
 - The OpenStreetMap API provides restaurant websites, and its map images are loaded by the Map tab through Leaflet.
 - Browsers only share location over https or on localhost, so nearby suggestions need the app to be online before they work on phones.
 

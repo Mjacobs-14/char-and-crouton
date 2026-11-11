@@ -8,7 +8,7 @@ const createAuth = require('./lib/auth');
 const { automaticBackup } = require('./lib/backup');
 const createAdmin = require('./lib/admin');
 const {
-  DISHES, BadRequest, clean, isValidScore, placeDetails, groupCenter, searchPlaces, searchNearby, exploreArea, fetchWebsite,
+  DISHES, BadRequest, clean, isValidScore, placeDetails, groupCenter, searchPlaces, searchAreas, searchNearby, exploreArea, fetchWebsite,
 } = require('./lib/shared');
 
 const PORT = Number(process.env.PORT) || 4173;
@@ -451,6 +451,13 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         console.error(`Place search failed: ${err.message}`);
         sendJson(res, 502, { error: 'Restaurant search is unavailable right now.' });
+      }
+    } else if (pathname === '/api/areas' && req.method === 'GET') {
+      try {
+        sendJson(res, 200, await searchAreas(searchParams, groupCenter(db.restaurants)));
+      } catch (err) {
+        console.error(`City search failed: ${err.message}`);
+        sendJson(res, 502, { error: 'City search is unavailable right now.' });
       }
     } else if (pathname === '/api/ratings' && req.method === 'POST') {
       const body = await readJson(req);

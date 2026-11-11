@@ -100,9 +100,21 @@ async function refresh() {
   }
 }
 
+// "curly" for "curley", or "capitol" for "capital": one letter wrong, missing or extra in a longer word.
+function oneTypoApart(a, b) {
+  if (a.length < 4 || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  return a.length < b.length ? a.slice(i) === b.slice(i + 1) : a.slice(i + 1) === b.slice(i);
+}
+
 function matches(restaurant, query) {
   const haystack = norm(`${restaurant.name} ${restaurant.area}`);
-  return norm(query).split(/\s+/).filter(Boolean).every((word) => haystack.includes(word));
+  const known = haystack.split(/[^a-z0-9]+/).filter(Boolean);
+  // A slip of the finger shouldn't hide a restaurant, including while the word is half typed.
+  const close = (word) => known.some((have) => oneTypoApart(word, have) || oneTypoApart(word, have.slice(0, word.length)));
+  return norm(query).split(/\s+/).filter(Boolean).every((word) => haystack.includes(word) || close(word));
 }
 
 function average(ratings) {
@@ -530,6 +542,14 @@ function wishRowHtml({ restaurant, wishes }) {
 function wishListHtml() {
   const groups = wishGroups();
   if (groups.length) return groups.map(wishRowHtml).join('');
+  if (state.query.trim() && !state.person && !state.area) {
+    return `
+      <div class="empty">
+        <h2>No "${esc(state.query.trim())}" on the list</h2>
+        <p>Nobody has saved a place by that name yet.</p>
+        <button class="primary" type="button" data-pick-save="${esc(state.query.trim())}">Find it and save it</button>
+      </div>`;
+  }
   if (state.person || state.area || state.query.trim()) {
     return `
       <div class="empty">
@@ -982,6 +1002,12 @@ const form = {
   searchTimer: null,
   searchToken: 0,
   coords: null,
+  // Where the search looks: 'us' (around the group's restaurants), 'me', or a chosen 'city'.
+  // Kept between ratings, so a trip doesn't mean choosing the city every time.
+  where: { kind: 'us' },
+  whereTimer: null,
+  whereToken: 0,
+  areas: [],
 };
 
 function verdictFor(score) {
@@ -1163,6 +1189,7 @@ function showPickedLocation(place) {
   const text = [place.address, place.area].filter(Boolean).join(', ');
   $('pickedLocation').textContent = text;
   $('pickedLocation').hidden = !text;
+  renderWhere();
 }
 
 function pickRestaurant(restaurant) {
@@ -1236,7 +1263,8 @@ function renderOptions(query, status) {
   const places = form.places.filter((p) => !localIds.has(p.placeId));
   list.innerHTML = [
     ...local.map((r) => optionHtml('restaurant', r.id, r.name, r, ' <em>on the board</em>')),
-    ...places.map((p) => optionHtml('place', p.placeId, p.name, p, '')),
+    ...places.map((p) => optionHtml('place', p.placeId, p.name, p,
+      form.where.kind === 'me' && Number.isFinite(p.meters) ? ` <em>· ${esc(formatDistance(p.meters))}</em>` : '')),
     status ? `<li class="status" role="presentation">${esc(status)}</li>` : '',
     optionHtml('manual', 'manual', `Can't find it? Add "${query.trim()}" by hand`, {}, '').replace('<li ', '<li class="manual" '),
     places.length ? '<li class="attribution" role="presentation">Places © OpenStreetMap contributors</li>' : '',
@@ -1265,10 +1293,7 @@ function showOptions() {
     let status = '';
     try {
       const params = new URLSearchParams({ q: query });
-      if (form.coords) {
-        params.set('lat', form.coords.lat);
-        params.set('lon', form.coords.lon);
-      }
+      addWhere(params);
       form.places = await api(`/api/places?${params}`);
     } catch {
       form.places = [];
@@ -1279,13 +1304,124 @@ function showOptions() {
   }, 250);
 }
 
+/* Where the search looks. Without a choice the server uses the middle of the group's restaurants. */
+function whereSpot() {
+  if (form.where.kind === 'city') return form.where;
+  if (form.where.kind === 'me') return form.coords;
+  // Until a restaurant with a known location is on the board, the browser's location is the only hint.
+  return state.restaurants.some(hasCoords) ? null : form.coords;
+}
+
+function addWhere(params) {
+  const spot = whereSpot();
+  if (spot) {
+    params.set('lat', spot.lat);
+    params.set('lon', spot.lon);
+  }
+}
+
+// The place most of the group's restaurants are in, to describe the usual search.
+function homeArea() {
+  const counts = new Map();
+  for (const r of state.restaurants.filter(hasCoords)) {
+    if (r.area) counts.set(r.area, (counts.get(r.area) || 0) + 1);
+  }
+  return [...counts].sort((a, b) => b[1] - a[1]).map(([area]) => area)[0] || '';
+}
+
+function renderWhere() {
+  const home = homeArea();
+  let text = home ? `Looking near ${home}` : 'Looking everywhere';
+  if (form.where.kind === 'me') text = 'Looking near you';
+  if (form.where.kind === 'city') text = `Looking near ${form.where.name}`;
+  $('whereText').textContent = text;
+  // Once a restaurant is chosen there is nothing left to look for.
+  const chosen = Boolean(form.picked || form.place);
+  $('whereLine').hidden = chosen;
+  if (chosen) closeWherePanel();
+}
+
+function closeWherePanel() {
+  clearTimeout(form.whereTimer);
+  form.whereToken += 1;
+  $('wherePanel').hidden = true;
+  $('whereChange').setAttribute('aria-expanded', 'false');
+}
+
+function toggleWherePanel() {
+  if (!$('wherePanel').hidden) {
+    closeWherePanel();
+    return;
+  }
+  $('whereCity').value = '';
+  $('whereResults').innerHTML = '';
+  $('whereStatus').textContent = '';
+  $('whereUs').setAttribute('aria-pressed', String(form.where.kind === 'us'));
+  $('whereMe').setAttribute('aria-pressed', String(form.where.kind === 'me'));
+  $('whereMe').hidden = !canLocate();
+  $('wherePanel').hidden = false;
+  $('whereChange').setAttribute('aria-expanded', 'true');
+}
+
+function setWhere(where) {
+  form.where = where;
+  form.nearby = [];
+  closeWherePanel();
+  renderWhere();
+  $('restaurantInput').focus();
+  // Whatever is already typed gets searched again in the new place.
+  if ($('restaurantInput').value.trim() && !form.manual) showOptions();
+}
+
+function chooseNearMe() {
+  $('whereStatus').textContent = 'Finding where you are…';
+  form.whereToken += 1;
+  const token = form.whereToken;
+  navigator.geolocation.getCurrentPosition(({ coords }) => {
+    if (token !== form.whereToken) return;
+    form.coords = { lat: coords.latitude, lon: coords.longitude };
+    setWhere({ kind: 'me' });
+  }, () => {
+    if (token === form.whereToken) $('whereStatus').textContent = "Couldn't get your location. Try typing the city.";
+  }, { timeout: 8000, maximumAge: 60000 });
+}
+
+function searchAreas() {
+  clearTimeout(form.whereTimer);
+  form.whereToken += 1;
+  const token = form.whereToken;
+  const query = $('whereCity').value.trim();
+  $('whereResults').innerHTML = '';
+  $('whereStatus').textContent = query.length >= 2 ? 'Searching…' : '';
+  if (query.length < 2) return;
+  form.whereTimer = setTimeout(async () => {
+    try {
+      const areas = await api(`/api/areas?${new URLSearchParams({ q: query })}`);
+      if (token !== form.whereToken) return;
+      form.areas = areas;
+      $('whereStatus').textContent = areas.length ? '' : 'No city by that name. Check the spelling.';
+      $('whereResults').innerHTML = areas.map((area, i) => `
+        <li><button class="place-result" type="button" data-area="${i}">${esc(area.name)}</button></li>`).join('');
+    } catch (err) {
+      if (token === form.whereToken) $('whereStatus').textContent = err.message;
+    }
+  }, 250);
+}
+
+function chooseArea(index) {
+  const area = form.areas[index];
+  if (area) setWhere({ kind: 'city', name: area.name, lat: area.lat, lon: area.lon });
+}
+
 /* Nearby: an empty restaurant box suggests what's around you. Browsers only share
    location over https or on localhost, so phones get this once the app is online. */
 const canLocate = () => window.isSecureContext && Boolean(navigator.geolocation);
 
 function formatDistance(meters) {
   const feet = meters * 3.28084;
-  return feet < 1000 ? `${Math.round(feet / 10) * 10} ft` : `${(meters / 1609.34).toFixed(1)} mi`;
+  if (feet < 1000) return `${Math.round(feet / 10) * 10} ft`;
+  const miles = meters / 1609.34;
+  return `${miles < 100 ? miles.toFixed(1) : Math.round(miles).toLocaleString()} mi`;
 }
 
 function renderNearby(html) {
@@ -1336,6 +1472,9 @@ function locateNearby() {
   };
   navigator.geolocation.getCurrentPosition(async ({ coords }) => {
     form.coords = { lat: coords.latitude, lon: coords.longitude };
+    // Having asked for what's nearby, typing a name should look nearby too.
+    form.where = { kind: 'me' };
+    renderWhere();
     try {
       const params = new URLSearchParams({ lat: coords.latitude, lon: coords.longitude });
       const nearby = await api(`/api/nearby?${params}`);
@@ -1393,6 +1532,7 @@ function openRate({ restaurantId = null, name = '', dish = state.dish, wish = fa
   $('rateError').textContent = '';
   $('restaurantInput').value = name;
   $('areaField').hidden = true;
+  closeWherePanel();
   showPickedLocation({});
   closeOptions();
   document.querySelector(`input[name="dish"][value="${dish}"]`).checked = true;
@@ -1538,10 +1678,7 @@ function searchEditPlaces() {
   editPlace.timer = setTimeout(async () => {
     try {
       const params = new URLSearchParams({ q: query, addresses: '1' });
-      if (form.coords) {
-        params.set('lat', form.coords.lat);
-        params.set('lon', form.coords.lon);
-      }
+      addWhere(params);
       const found = await api(`/api/places?${params}`);
       if (token !== editPlace.token) return;
       editPlace.found = found;
@@ -1733,6 +1870,20 @@ $('restaurantInput').addEventListener('keydown', (event) => {
   }
 });
 $('restaurantInput').addEventListener('blur', () => setTimeout(closeOptions, 120));
+$('whereChange').addEventListener('click', toggleWherePanel);
+$('whereUs').addEventListener('click', () => setWhere({ kind: 'us' }));
+$('whereMe').addEventListener('click', chooseNearMe);
+$('whereCity').addEventListener('input', searchAreas);
+$('whereCity').addEventListener('keydown', (event) => {
+  // Enter picks the first city rather than posting the rating.
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  chooseArea(0);
+});
+$('whereResults').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-area]');
+  if (button) chooseArea(Number(button.dataset.area));
+});
 $('restaurantInput').addEventListener('focus', showNearby);
 $('photoInput').addEventListener('change', choosePhoto);
 $('photoPick').addEventListener('keydown', (event) => {

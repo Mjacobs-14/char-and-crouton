@@ -457,7 +457,8 @@ textarea { resize: vertical; display: block; }
 .options[hidden] { display: none; }
 .options li { padding: 9px 10px; border-radius: 8px; cursor: pointer; overflow-wrap: anywhere; }
 .options li small { display: block; color: var(--muted); font-size: 14px; }
-.options li.manual { color: var(--brand-text); font-weight: 600; }
+/* Stays in view however long the list is, so adding by hand is never a scroll away. */
+.options li.manual { position: sticky; bottom: -4px; background: var(--card); color: var(--brand-text); font-weight: 600; }
 .options li.status, .options li.attribution { color: var(--muted); font-size: 13px; cursor: default; }
 .options li.status:hover, .options li.attribution:hover { background: none; }
 .options li.attribution { padding: 4px 10px; font-size: 12px; }
@@ -706,7 +707,7 @@ body[data-dish='map'] .filters, body[data-dish='try'] .filters { grid-template-c
 .dish-none { color: var(--muted); font-weight: 500; font-size: 14px; }
 .dish-block .ghost { margin-top: 8px; }
 
-.place-results { margin: 6px 0 0; padding: 0; list-style: none; }
+.place-results { margin: 6px 0 0; padding: 0; list-style: none; max-height: 260px; overflow-y: auto; }
 .place-result {
   display: block;
   width: 100%;
@@ -721,6 +722,15 @@ body[data-dish='map'] .filters, body[data-dish='try'] .filters { grid-template-c
 .place-result:hover { background: var(--track); }
 .place-result small { display: block; color: var(--muted); font-size: 14px; }
 .picked-location:empty { display: none; }
+
+/* Where the restaurant search is looking, and the choices for changing it. */
+.where { display: flex; align-items: center; flex-wrap: wrap; gap: 0 6px; margin: -8px 0 0; font-size: 14px; color: var(--muted); }
+.where[hidden], .where-panel[hidden] { display: none; }
+.where-panel { margin: 0 0 10px; padding: 10px; border: 1.5px solid var(--line); border-radius: 12px; }
+.where-choices { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.where-choices .ghost[aria-pressed='true'] { background: color-mix(in srgb, var(--brand-text) 12%, transparent); }
+.where-status { margin: 6px 0 0; font-size: 14px; color: var(--muted); }
+.where-status:empty { display: none; }
 
 @media (max-width: 900px) {
   .map-layout { grid-template-columns: minmax(0, 1fr); }

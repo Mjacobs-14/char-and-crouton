@@ -85,6 +85,20 @@
 
       <div class="field combo">
         <label for="restaurantInput">Restaurant</label>
+        <p class="where" id="whereLine">
+          <span id="whereText"></span>
+          <button class="link" type="button" id="whereChange" aria-expanded="false" aria-controls="wherePanel">Change</button>
+        </p>
+        <div class="where-panel" id="wherePanel" hidden>
+          <div class="where-choices">
+            <button class="ghost" type="button" id="whereUs">Near our restaurants</button>
+            <button class="ghost" type="button" id="whereMe">Near me</button>
+          </div>
+          <label class="visually-hidden" for="whereCity">City to search in</label>
+          <input id="whereCity" type="text" maxlength="60" autocomplete="off" placeholder="Or type a city, like Chicago">
+          <ul class="place-results" id="whereResults"></ul>
+          <p class="where-status" id="whereStatus" role="status"></p>
+        </div>
         <input id="restaurantInput" type="text" maxlength="80" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="restaurantList" aria-autocomplete="list" placeholder="Start typing a name">
         <ul id="restaurantList" class="options" role="listbox" aria-label="Matching restaurants" hidden></ul>
         <p class="picked-location" id="pickedLocation" hidden></p>

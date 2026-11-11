@@ -110,6 +110,7 @@ async function join(name) {
     ok('no photos without signing in', (await fetch(`${base}/photos/${homePhoto}.jpg`)).status === 401);
     ok('no posting without signing in', (await client().send('/api/ratings', { restaurant: { name: 'X' }, dish: 'burger', score: 5 })).status === 401);
     ok('no exploring without signing in', (await fetch(`${base}/api/explore?lat=42.35&lon=-71.05`)).status === 401);
+    ok('no city search without signing in', (await fetch(`${base}/api/areas?q=boston`)).status === 401);
     ok('wrong admin token refused', (await fetch(`${base}/api/admin/export`, { headers: { Authorization: 'Bearer wrong' } })).status === 401);
 
     console.log('--- Moving the data ---');
@@ -128,6 +129,8 @@ async function join(name) {
     ok('restaurants arrive exactly as they were', JSON.stringify(s.restaurants) === JSON.stringify(seeded.restaurants), `${s.restaurants.length} restaurants`);
     ok('passwords never reach the page', !('accounts' in s) && !('sessions' in s));
     ok('exploring without a location is refused', (await matt.request('/api/explore')).status === 400);
+    const noCity = await matt.request('/api/areas?q=b');
+    ok('a city search answers once signed in', noCity.status === 200 && (await noCity.json()).length === 0);
     ok('the moved photo is there', (await matt.request(`/photos/${homePhoto}.jpg`)).status === 200);
     const sam = await join('Sam');
     const signIn = client();
