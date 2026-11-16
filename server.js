@@ -153,7 +153,7 @@ function saveRating(body, rater) {
   const note = clean(body.note, 280);
   if (!DISHES.includes(body.dish)) throw new BadRequest('Dish must be a burger or a caesar.');
   if (!isValidScore(body.score)) throw new BadRequest('Score must be 1.0 to 10.0, in tenths.');
-  if (body.photo && !(PHOTO_ID.test(body.photo) && fs.existsSync(photoPath(body.photo)))) {
+  if (body.photo && !(typeof body.photo === 'string' && PHOTO_ID.test(body.photo) && fs.existsSync(photoPath(body.photo)))) {
     throw new BadRequest('That photo did not upload. Please try it again.');
   }
 
@@ -162,6 +162,10 @@ function saveRating(body, rater) {
   const existing = db.ratings.find(
     (r) => r.restaurantId === restaurant.id && r.dish === body.dish && same(r.rater, rater),
   );
+  // A photo belongs to one rating. Shared, it would vanish for both when either was deleted.
+  if (body.photo && db.ratings.some((r) => r !== existing && r.photo === body.photo)) {
+    throw new BadRequest('That photo is already on another rating. Please add it again.');
+  }
   // Leaving photo out keeps the current one; null removes it.
   const photoChange = body.photo === undefined ? {} : { photo: body.photo };
   let replaced = null;

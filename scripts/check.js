@@ -395,6 +395,13 @@ async function checkSearch() {
   await friend.send('/api/wishes', { restaurant: { name: 'Auth Grill', area: '' }, note: 'mine' });
   const wishId = (await friend.state()).wishes.find((w) => w.note === 'mine').id;
   ok("you cannot change someone else's list", (await newcomer.remove(`/api/wishes/${wishId}`)).status === 403);
+  const samPhoto = (await (await friend.request('/api/photos', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: jpeg })).json()).id;
+  await friend.send('/api/ratings', { restaurant: { name: 'Auth Grill', area: '' }, dish: 'burger', score: 4, note: 'spoof', photo: samPhoto });
+  const borrowed = await newcomer.send('/api/ratings', { restaurant: { name: 'Auth Grill', area: '' }, dish: 'caesar', score: 3, photo: samPhoto });
+  ok("you cannot put someone else's photo on your rating", borrowed.status === 400 && !(await friend.state()).ratings.some((r) => r.rater === 'Matt' && r.photo === samPhoto));
+  ok('saving your own rating again keeps its photo', (await friend.send('/api/ratings', { restaurant: { name: 'Auth Grill', area: '' }, dish: 'burger', score: 4, note: 'spoof', photo: samPhoto })).status === 200
+    && fs.existsSync(path.join(dir, 'photos', `${samPhoto}.jpg`)));
+  await friend.send('/api/ratings', { restaurant: { name: 'Auth Grill', area: '' }, dish: 'burger', score: 4, note: 'spoof', photo: null });
 
   const signIn = client(base);
   ok('the right password signs in', (await signIn.send('/api/login', { name: 'matt', password })).status === 200);
@@ -403,6 +410,8 @@ async function checkSearch() {
   const guesser = client(base);
   for (let i = 0; i < 5; i += 1) await guesser.send('/api/login', { name: 'Sam', password: 'wrong-password' });
   ok('repeated wrong passwords lock that visitor out', (await guesser.send('/api/login', { name: 'Sam', password: friend.password })).status === 429);
+  const burst = await Promise.all(Array.from({ length: 20 }, () => client(base).send('/api/login', { name: 'Burst', password: 'wrong-password' })));
+  ok('guesses sent all at once are limited too', burst.filter((r) => r.status === 400).length === 5 && burst.filter((r) => r.status === 429).length === 15, burst.map((r) => r.status).join());
 
   const reset = client(base);
   await reset.send('/api/claim', { code: invite(file, 'Matt'), password: randomBytes(12).toString('hex') });

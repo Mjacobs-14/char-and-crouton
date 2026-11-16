@@ -86,6 +86,21 @@ async function noteFailure(env, key) {
   ]);
 }
 
+// Counts a try at each key before the slow password check, so guesses sent all at once can't
+// get in ahead of the lock. The database adds them up one at a time, and says how many so far.
+async function countTries(env, keys) {
+  const now = Date.now();
+  const [, ...counted] = await env.DB.batch([
+    env.DB.prepare('DELETE FROM failures WHERE until < ?').bind(now),
+    ...keys.map((key) => env.DB.prepare(`INSERT INTO failures (key, count, until) VALUES (?, 1, ?)
+      ON CONFLICT (key) DO UPDATE SET count = count + 1, until = excluded.until RETURNING count`).bind(key, now + LOCK_MS)),
+  ]);
+  return counted.map((result) => result.results[0].count);
+}
+
+// Takes back one counted try, after it turned out to be the right password.
+const forgive = (env, key) => env.DB.prepare('UPDATE failures SET count = count - 1 WHERE key = ? AND count > 0').bind(key).run();
+
 const clearFailures = (env, key) => env.DB.prepare('DELETE FROM failures WHERE key = ?').bind(key).run();
 
 // When the sign-in gets renewed, `renewed.cookie` is set for the response to carry.
@@ -139,6 +154,10 @@ export async function login(env, request, body) {
   const key = `${nameKey}:${clientAddress(request)}`;
   await assertNotLocked(env, key);
   await assertNotLocked(env, nameKey, MAX_NAME_FAILURES);
+  const [tries, nameTries] = await countTries(env, [key, nameKey]);
+  if (tries > MAX_FAILURES || nameTries > MAX_NAME_FAILURES) {
+    throw new BadRequest('Too many tries. Please wait 15 minutes and try again.', 429);
+  }
   const account = await env.DB.prepare('SELECT person, password FROM accounts WHERE lower(person) = lower(?)').bind(name).first();
   if (account && !isPortable(account.password)) {
     throw new BadRequest('Since the move, your password needs setting again. Ask for a new invite code.');
@@ -146,11 +165,10 @@ export async function login(env, request, body) {
   const matches = account && typeof body.password === 'string' && body.password.length <= MAX_PASSWORD
     && await passwordMatches(body.password, account.password);
   if (!matches) {
-    await noteFailure(env, key);
-    await noteFailure(env, nameKey);
     throw new BadRequest("That name and password don't match. First time here? Use your invite code.");
   }
   await clearFailures(env, key);
+  await forgive(env, nameKey);
   const { token, statements } = await sessionStatements(env, account.person);
   await env.DB.batch(statements);
   return token;

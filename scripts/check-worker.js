@@ -149,6 +149,8 @@ async function join(name) {
     const signInFrom = (ip) => client().send('/api/login', { name: 'Sam', password: sam.password }, { 'CF-Connecting-IP': ip });
     ok('wrong passwords lock out the guesser', (await signInFrom('203.0.113.1')).status === 429);
     ok('a guesser cannot lock the real person out', (await signInFrom('203.0.113.2')).status === 200);
+    const burst = await Promise.all(Array.from({ length: 20 }, () => client().send('/api/login', { name: 'Burst', password: 'wrong-password' }, { 'CF-Connecting-IP': '203.0.113.30' })));
+    ok('guesses sent all at once are limited too', burst.filter((r) => r.status === 400).length === 5 && burst.filter((r) => r.status === 429).length === 15, burst.map((r) => r.status).join());
     const badCode = (ip) => client().send('/api/claim', { code: 'NOPE-NOPE-NOPE', password: 'long-enough-1' }, { 'CF-Connecting-IP': ip });
     for (let i = 0; i < 5; i += 1) await badCode('203.0.113.7');
     ok('wrong invite codes lock out only that visitor', (await badCode('203.0.113.7')).status === 429 && (await badCode('203.0.113.8')).status === 400);
@@ -210,6 +212,10 @@ async function join(name) {
       && s.ratings.filter((r) => r.restaurantId === wish.restaurantId && r.rater === 'Matt').length === 1, ratings.map((r) => r.status).join());
     await pal.send('/api/ratings', { restaurant: { id: wish.restaurantId }, dish: 'caesar', score: 9 });
     ok('rating a place takes it off your list', !(await pal.state()).wishes.some((w) => w.id === wish.id));
+    const borrowed = await pal.send('/api/ratings', { restaurant: { id: mine.restaurantId }, dish: 'caesar', score: 3, photo: photo2 });
+    ok("you cannot put someone else's photo on your rating", borrowed.status === 400 && !(await matt.state()).ratings.some((r) => r.rater === 'Pal' && r.photo === photo2));
+    ok('saving your own rating again keeps its photo', (await matt.send('/api/ratings', { restaurant: { id: mine.restaurantId }, dish: 'burger', score: 8.5, note: 'third', photo: photo2 })).status === 200
+      && (await matt.request(`/photos/${photo2}.jpg`)).status === 200);
     const edit = await matt.request(`/api/restaurants/${mine.restaurantId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Renamed Grill', area: 'Testville, MA' }) });
     ok('restaurants can be renamed', edit.status === 200 && (await matt.state()).restaurants.some((r) => r.name === 'Renamed Grill'));
     await matt.remove(`/api/ratings/${mine.id}`);

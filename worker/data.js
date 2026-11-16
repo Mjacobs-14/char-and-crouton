@@ -108,7 +108,7 @@ export async function saveRating(env, body, rater) {
   if (!DISHES.includes(body.dish)) throw new BadRequest('Dish must be a burger or a caesar.');
   if (!isValidScore(body.score)) throw new BadRequest('Score must be 1.0 to 10.0, in tenths.');
   if (body.photo) {
-    const stored = PHOTO_ID.test(body.photo) && await env.PHOTOS.prepare('SELECT 1 FROM photos WHERE id = ?').bind(body.photo).first();
+    const stored = typeof body.photo === 'string' && PHOTO_ID.test(body.photo) && await env.PHOTOS.prepare('SELECT 1 FROM photos WHERE id = ?').bind(body.photo).first();
     if (!stored) throw new BadRequest('That photo did not upload. Please try it again.');
   }
   const restaurant = await resolveRestaurant(env, body.restaurant);
@@ -116,6 +116,11 @@ export async function saveRating(env, body, rater) {
   const now = new Date().toISOString();
   const existing = await env.DB.prepare('SELECT * FROM ratings WHERE restaurant_id = ? AND dish = ? AND lower(rater) = lower(?)')
     .bind(restaurant.id, body.dish, rater).first();
+  if (body.photo) {
+    // A photo belongs to one rating. Shared, it would vanish for both when either was deleted.
+    const taken = await env.DB.prepare('SELECT 1 FROM ratings WHERE photo = ? AND id != ?').bind(body.photo, existing ? existing.id : '').first();
+    if (taken) throw new BadRequest('That photo is already on another rating. Please add it again.');
+  }
   const statements = [...restaurant.statements];
   let replaced = null;
   if (existing) {
