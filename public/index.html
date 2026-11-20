@@ -149,9 +149,12 @@
         </div>
       </div>
 
-      <p class="form-error" id="rateError" role="alert"></p>
-      <p class="form-hint" id="rateHint"></p>
-      <button class="primary wide" type="submit" id="rateSubmit">Post rating</button>
+      <!-- Stays in view with the button, so a problem or "this updates your grade" is never hidden. -->
+      <div class="form-foot">
+        <p class="form-error" id="rateError" role="alert"></p>
+        <p class="form-hint" id="rateHint"></p>
+        <button class="primary wide" type="submit" id="rateSubmit">Post rating</button>
+      </div>
     </form>
   </dialog>
 

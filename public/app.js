@@ -51,6 +51,40 @@ const state = {
 };
 let lastSnapshot = '';
 
+/* What's new: friends' ratings since this person's last visit. Remembered on each device, as the
+   newest rating time seen there, so it follows the server's clock rather than the phone's. */
+const NEW_VISIT_AFTER_MS = 60 * 60 * 1000;
+const seen = { key: '', before: null, hiddenAt: 0 };
+
+function noteVisit(data) {
+  if (!data.me) return;
+  const key = `seen:${data.me.toLowerCase()}`;
+  // Read once per visit, so marks stay put while the app is open. The first visit marks nothing.
+  if (seen.key !== key) {
+    seen.key = key;
+    seen.before = stored(key);
+  }
+  const latest = data.ratings.reduce((newest, r) => (r.updatedAt > newest ? r.updatedAt : newest), '');
+  const kept = stored(key);
+  if (latest && (!kept || latest > kept)) store(key, latest);
+}
+
+// Coming back after a while counts as a new visit, so what was new last time stops being marked.
+function startVisitIfAway() {
+  if (document.hidden) {
+    seen.hiddenAt = Date.now();
+    return;
+  }
+  if (seen.key && seen.hiddenAt && Date.now() - seen.hiddenAt > NEW_VISIT_AFTER_MS) {
+    seen.before = stored(seen.key);
+    render();
+  }
+  seen.hiddenAt = 0;
+}
+
+const isNew = (rating) => Boolean(seen.before) && rating.updatedAt > seen.before && !isMe(rating.rater);
+const NEW_TAG = ' <span class="new-tag">New</span>';
+
 async function api(path, options) {
   const res = await fetch(path, options);
   const body = await res.json().catch(() => ({}));
@@ -73,6 +107,7 @@ function applyData(data) {
   state.loaded = true;
   state.offline = false;
   state.signedOut = false;
+  noteVisit(data);
   lastSnapshot = JSON.stringify(data);
   render();
   fillMissingThumbs();
@@ -186,7 +221,7 @@ function reviewHtml(rating) {
     <div class="review">
       <span class="avatar" aria-hidden="true">${initials(rating.rater)}</span>
       <div>
-        <span class="review-name">${esc(rating.rater)}</span><span class="review-date">${esc(date)}</span>
+        <span class="review-name">${esc(rating.rater)}</span><span class="review-date">${esc(date)}</span>${isNew(rating) ? NEW_TAG : ''}
         ${rating.note ? `<p class="review-note">${esc(rating.note)}</p>` : ''}
         ${rating.photo ? `<a class="review-photo" href="/photos/${esc(rating.photo)}.jpg" target="_blank" rel="noopener"><img src="/photos/${esc(rating.photo)}.jpg" alt="${esc(rating.rater)}'s photo" loading="lazy"></a>` : ''}
         ${mine ? `<div class="review-actions">
@@ -211,7 +246,7 @@ function rowHtml(entry) {
   const iRatedThis = !state.me || everyone.some((r) => isMe(r.rater));
   const meta = [
     count,
-    state.person || iRatedThis ? '' : `${state.me} hasn't rated`,
+    state.person || iRatedThis ? '' : "You haven't rated",
     other.length ? `${dish.otherEmoji}\u00a0${fmt(average(other))}` : '',
   ].filter(Boolean).map(esc).join(' · ');
   // Location is noise when everything's in one city, so it only shows once it helps.
@@ -220,7 +255,7 @@ function rowHtml(entry) {
   const photo = ratings.find((r) => r.photo);
   const isSingle = !state.person && ratings.length === 1;
   const place = `
-          <span class="place-name">${esc(restaurant.name)}</span>
+          <span class="place-name">${esc(restaurant.name)}${ratings.some(isNew) ? NEW_TAG : ''}</span>
           <span class="place-meta">${meta}</span>
           ${moreMeta ? `<span class="place-meta">${moreMeta}</span>` : ''}
           ${listTagsHtml(restaurant, state.dish)}`;
@@ -311,8 +346,11 @@ function renderMasthead(rated) {
   document.body.dataset.dish = activeTab;
   $('boardTitle').textContent = onMap ? 'The Map' : onTry ? 'Want to Try' : dish.board;
   $('rateButton').textContent = onTry ? 'Save a place' : onMap ? 'Add a rating' : `Rate a ${dish.one}`;
+  const newFor = (dishKey) => state.ratings.filter((r) => r.dish === dishKey && isNew(r)).length;
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.setAttribute('aria-pressed', String(tab.dataset.dish === activeTab));
+    // A dot on a board with new ratings, so they aren't missed on the other dish.
+    tab.classList.toggle('has-new', tab.dataset.dish in DISHES && newFor(tab.dataset.dish) > 0);
   });
   if (!state.loaded) {
     $('boardStat').textContent = state.offline ? "Can't reach the board right now." : state.signedOut ? '' : 'Loading…';
@@ -326,7 +364,9 @@ function renderMasthead(rated) {
     const leader = rated[0];
     const count = rated.length === 1 ? '1 spot' : `${rated.length} spots`;
     const who = state.person ? ` for ${state.person}` : '';
-    $('boardStat').textContent = `${leader.restaurant.name} leads${who} at ${fmt(leader.avg)} · ${count}`;
+    const fresh = newFor(state.dish);
+    const news = fresh ? ` · ${fresh} new since your last visit` : '';
+    $('boardStat').textContent = `${leader.restaurant.name} leads${who} at ${fmt(leader.avg)} · ${count}${news}`;
   } else {
     $('boardStat').textContent = state.person || state.area ? `No ${dish.plural} rated with those filters.` : `No ${dish.plural} rated yet.`;
   }
@@ -906,6 +946,8 @@ function panelHtml(entry) {
     `<button class="link" type="button" data-edit-restaurant="${restaurant.id}">Edit restaurant</button>`,
   ];
   const where = [restaurant.address, restaurant.area].filter(Boolean).map(esc).join(', ');
+  // Want to Try is for places you haven't eaten at yet, the same as on the boards.
+  const iAteHere = state.ratings.some((r) => r.restaurantId === restaurant.id && isMe(r.rater));
   return `
     <article class="panel">
       <h2>${esc(restaurant.name)}</h2>
@@ -913,7 +955,7 @@ function panelHtml(entry) {
       <div class="panel-links">${links.join('')}</div>
       <p class="wish-line">
         ${entry.wishes.length ? `⭐ ${esc(entry.wishes.map((w) => w.person).join(' & '))} ${entry.wishes.length === 1 ? 'wants' : 'want'} to try it.` : ''}
-        ${wishToggleHtml(restaurant.id)}
+        ${iAteHere ? '' : wishToggleHtml(restaurant.id)}
       </p>
       ${listLinksHtml(restaurant, 'burger')}
       ${dishBlockHtml('burger', entry.burger, restaurant)}
@@ -1636,11 +1678,36 @@ async function submitRating(event) {
     applyData(data);
     form.photoBlob = null;
     toast(`Posted your ${fmt(score)}.`);
+    const posted = data.ratings
+      .filter((r) => r.dish === dish && isMe(r.rater))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    if (posted) showLanded(posted.restaurantId);
   } catch (err) {
     $('rateError').textContent = err.message;
   } finally {
     submit.disabled = false;
   }
+}
+
+// A new grade can move a restaurant far down the board, so go to it and point it out.
+function showLanded(restaurantId) {
+  if (state.view === 'map') {
+    selectOnMap(restaurantId);
+    return;
+  }
+  if (state.view === 'try') {
+    state.view = 'board';
+    store('view', state.view);
+  }
+  state.open.add(restaurantId);
+  render();
+  const button = document.querySelector(`[data-toggle="${CSS.escape(restaurantId)}"]`);
+  const row = button && button.closest('.row');
+  if (!row) return;
+  const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  row.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'center' });
+  row.classList.add('landed');
+  setTimeout(() => row.classList.remove('landed'), 2000);
 }
 
 /* Editing a restaurant */
@@ -1938,6 +2005,7 @@ setInterval(() => {
   if (!document.hidden) refresh();
 }, 30000);
 document.addEventListener('visibilitychange', () => {
+  startVisitIfAway();
   if (!document.hidden) refresh();
 });
 window.addEventListener('focus', refresh);
